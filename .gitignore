@@ -1,0 +1,30 @@
+# Manuscript and submission material (kept local)
+writing/
+submitting/
+
+# Reference papers (publisher copyright, kept local)
+rietkerk2002.pdf
+siero2020.pdf
+
+# Result folders (model weights, trajectories, figures)
+results/
+synthetic_results_1site/
+
+# Cluster job logs
+nca_output_*.txt
+nca_error_*.txt
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
