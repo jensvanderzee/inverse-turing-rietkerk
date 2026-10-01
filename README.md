@@ -148,7 +148,8 @@ Parameters are recovered from data generated with known ground-truth values.
 
 | script | purpose |
 |:--|:--|
-| `realdata_train_invPDE.py` | Fit PDE parameters to the four training sites (7500 epochs per model) |
+| `realdata_train_invPDE.py` | Fit PDE parameters to the four training sites (7500 epochs per model; `--models START STOP`, `--device`, `--num_epochs`, and `--gradient_checkpointing` for GPUs with 16 GB or less) |
+| `realdata_train_colab.ipynb` | Run `realdata_train_invPDE.py` on a Colab GPU, with checkpoints on Google Drive so training resumes after a disconnect |
 | `realdata_train_invPDE_10to20.py` | Same, for model indices 10–19, so runs can be split across jobs |
 | `find_stable_seed.py` | Find a seed that trains stably for biomass multipliers 750, 1500 and 3000 |
 | `multiplier_check_analysis.py` | Compare runs with different biomass multipliers |
@@ -177,7 +178,9 @@ backbone, rerun `measure_runtime.py` on the target hardware. The synthetic
 experiments now take 2 steps per week instead of 1, but the four synthetic sites
 are simulated as one batch, and a step is dominated by kernel-launch overhead on
 grids this small; for a memory-limited GPU, set `model.gradient_checkpointing = True`
-(one extra forward pass, far less activation memory).
+(one extra forward pass, far less activation memory; `realdata_train_invPDE.py
+--gradient_checkpointing` does this). Real-data training without it needs more
+than 15 GB on CPU, and peaks at about 2.3 GB with it.
 
 | experiment | epochs | estimated wall time |
 |:--|--:|--:|

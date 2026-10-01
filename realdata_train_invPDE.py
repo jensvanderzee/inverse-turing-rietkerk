@@ -449,7 +449,8 @@ def train_model_real_data(training_data: Dict,
                           steps_per_week: int = 7,
                           use_delta_loss: bool = True,
                           checkpoint_path: Optional[str] = None,
-                          checkpoint_every: int = 10) -> Tuple[List[float], invRietkerk, dict, List[dict]]:
+                          checkpoint_every: int = 10,
+                          gradient_checkpointing: bool = False) -> Tuple[List[float], invRietkerk, dict, List[dict]]:
     """
     Train model on real satellite data using weekly precipitation forcing.
 
@@ -460,6 +461,10 @@ def train_model_real_data(training_data: Dict,
         checkpoint_path: if given, the full training state is written there every
             `checkpoint_every` epochs, and an existing checkpoint is resumed from
             instead of drawing a new random start
+        gradient_checkpointing: recompute each week of the rollout during the
+            backward pass instead of storing it: same gradients for one extra
+            forward pass, and far less memory (on CPU, peak ~2.3 GB instead of
+            >14 GB); for GPUs with 16 GB or less, or CPU
         Other args same as original
     """
     
@@ -492,6 +497,7 @@ def train_model_real_data(training_data: Dict,
                                               model_class=invRietkerk)
         model.init_draws = init_draws
         print(f"Random start accepted after {init_draws} draw(s)", flush=True)
+    model.gradient_checkpointing = gradient_checkpointing
     loss_function = nn.MSELoss()
 
     # Store initial parameters
@@ -655,7 +661,8 @@ def train_models_real_data(data_dir: str,
                            num_epochs: int = 7500,
                            learning_rate: float = 0.01,
                            model_ids: Optional[List[int]] = None,
-                           device: Optional[torch.device] = None):
+                           device: Optional[torch.device] = None,
+                           gradient_checkpointing: bool = False):
     """
     Train multiple models with weekly precipitation forcing using real satellite data.
 
@@ -751,7 +758,8 @@ def train_models_real_data(data_dir: str,
                 save_interval=10,
                 steps_per_week=steps_per_week,
                 use_delta_loss=use_delta_loss,
-                checkpoint_path=f"{save_dir}/checkpoints/model_{model_idx:02d}.pt"
+                checkpoint_path=f"{save_dir}/checkpoints/model_{model_idx:02d}.pt",
+                gradient_checkpointing=gradient_checkpointing
             )
 
             final_loss = loss_history[-1]
@@ -903,6 +911,8 @@ if __name__ == "__main__":
                         help="train models START..STOP-1 of the 10")
     parser.add_argument("--device", choices=["cpu", "cuda"])
     parser.add_argument("--num_epochs", type=int, default=7500)
+    parser.add_argument("--gradient_checkpointing", action="store_true",
+                        help="same gradients, far less memory, one extra forward pass")
     cli = parser.parse_args()
 
     # Example usage with site selection and weekly precipitation
@@ -926,6 +936,7 @@ if __name__ == "__main__":
         num_epochs=cli.num_epochs,
         model_ids=range(*cli.models) if cli.models else None,
         device=torch.device(cli.device) if cli.device else None,
+        gradient_checkpointing=cli.gradient_checkpointing,
     )
 
     print("\nWeekly precipitation training completed!")
