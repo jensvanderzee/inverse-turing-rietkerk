@@ -131,7 +131,8 @@ Parameters are recovered from data generated with known ground-truth values.
 
 | script | purpose |
 |:--|:--|
-| `train_invPDE_synthetic_batch.py` | Train the inverse PDE on synthetic data from four sites (`--start`, `--end`, `--gpu`, `--learning_rate`, `--grid_size`) |
+| `train_invPDE_synthetic_batch.py` | Train the inverse PDE on synthetic data from four sites (`--start`, `--end`, `--gpu`, `--learning_rate`, `--grid_size`, and `--gradient_checkpointing` for GPUs under 24 GB: the fit needs ~12 GB without it) |
+| `synthetic_train_colab.ipynb` | Run the four-site or one-site synthetic experiment on a Colab GPU, with results on Google Drive; finished runs are skipped and four-site runs resume from their checkpoints after a disconnect |
 | `train_invPDE_synthetic_batch_1site.py` | Same, for one site |
 | `train_rcnn_batch.py` | Train the RCNN baseline on the same synthetic data |
 | `compare_invPDE_synthetic_params.py` | Learned vs ground-truth parameters, four sites |
