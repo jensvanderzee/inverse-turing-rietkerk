@@ -116,8 +116,13 @@ def train_model_adam(training_data: List[List[torch.Tensor]],
                     save_interval: int = 10,
                     steps_per_week: int = 3,
                     checkpoint_path: Optional[str] = None,
-                    checkpoint_every: int = 50) -> Tuple[List[float], invRietkerk, dict, List[dict]]:
+                    checkpoint_every: int = 50,
+                    gradient_checkpointing: bool = False) -> Tuple[List[float], invRietkerk, dict, List[dict]]:
     """Fit all parameters with Adam.
+
+    `gradient_checkpointing` recomputes each week of the rollout during the backward
+    pass: same gradients for one extra forward pass, and far less memory (the
+    four-site fit peaks at ~12 GB without it on CPU).
 
     With `checkpoint_path`, the full training state (parameters, optimiser,
     scheduler, histories) is written there every `checkpoint_every` epochs, and
@@ -157,6 +162,7 @@ def train_model_adam(training_data: List[List[torch.Tensor]],
         model.init_draws = init_draws
         model.prior_elapsed = 0.0
         print(f"Random start accepted after {init_draws} draw(s)", flush=True)
+    model.gradient_checkpointing = gradient_checkpointing
 
     initial_params = model.parameter_values()
     parameter_history = []
@@ -254,6 +260,7 @@ class Args:
     grid_size = 128
     output_dir = os.path.join("results", "synthetic_invPDE_4site_rietkerk")
     checkpoint_every = 50
+    gradient_checkpointing = False
 args = Args()
 if __name__ == "__main__" and len(sys.argv) > 1:
     parser = argparse.ArgumentParser()
@@ -266,6 +273,8 @@ if __name__ == "__main__" and len(sys.argv) > 1:
     parser.add_argument("--output_dir", type=str, default=Args.output_dir)
     parser.add_argument("--checkpoint_every", type=int, default=Args.checkpoint_every,
                         help="Epochs between checkpoints; a rerun resumes from the last one")
+    parser.add_argument("--gradient_checkpointing", action="store_true",
+                        help="Same gradients, far less memory, one extra forward pass")
     args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -346,7 +355,8 @@ for run_id in range(args.start, args.end + 1):
         save_interval=10,
         steps_per_week=steps_per_week,
         checkpoint_path=os.path.join(args.output_dir, "checkpoints", f"run_{run_id:02d}.pt"),
-        checkpoint_every=args.checkpoint_every
+        checkpoint_every=args.checkpoint_every,
+        gradient_checkpointing=args.gradient_checkpointing
     )
 
     elapsed = model.prior_elapsed + time.time() - start_time
