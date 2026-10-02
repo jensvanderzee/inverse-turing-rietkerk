@@ -11,9 +11,9 @@ around it.
 ∂B/∂t = D_P ΔB + c g_max W B/(W + k₁) − d B
 ```
 
-It reproduces `rietkerk_model.py` exactly — the same semi-implicit scheme, units,
-reference values, bounds, viability-screened starts and log-space Adam — and adds
-what the Julia ecosystem offers on top: reverse-mode AD with **Enzyme**, the
+It reproduces `rietkerk_model.py` — the same semi-implicit scheme, units, reference
+values, bounds, viability-screened starts and log-space Adam, agreeing with it to
+1e-8 or better — and adds what the Julia ecosystem offers on top: reverse-mode AD with **Enzyme**, the
 continuous PDE through **DifferentialEquations.jl**, and continuous adjoints through
 **SciMLSensitivity.jl**. The second half of this README is an evaluation of those
 three libraries on this problem, with measurements.
@@ -226,7 +226,7 @@ reltol = 1e-4`.
   times as long for the eleven parameters, because every partial rides through
   every FFT.
 - **Accuracy.** Matches ForwardDiff to 1e-13 and PyTorch's autograd to 1e-8.
-- **Caveats.** The first gradient in a session compiles for about 1.5 minutes. And with
+- **Caveats.** The first gradient in a session compiles for 100 s. And with
   Enzyme 0.13.209 on Julia 1.12.7, differentiating a runtime-length loop around the
   step function — a whole week per `autodiff` call — corrupted the heap after about
   4000 calls (the garbage collector then segfaults), with or without threads; a
@@ -271,6 +271,9 @@ reltol = 1e-4`.
 - **Accuracy.** The three adjoints agree with ForwardDiff through the solver to
   ~1e-12 when both solve tightly, and with the tight reference to 1e-5 or better at
   the loose tolerances above.
+- **Threads.** Sites run on separate threads, as with `EnzymeBackend`: 61 gradients
+  of four sites on three threads (some 25 000 adjoint solves) ran without a fault,
+  each bit-identical to the first.
 - **Cost.** On site b an adjoint gradient takes 5–8 s (error 1e-8–7e-6), against
   0.66 s for the fixed-step Enzyme gradient (6e-2) and 7.4 s for the fixed-step
   gradient at 48 steps per week, which is still off by 4e-3. On the stiff synthetic
@@ -298,19 +301,19 @@ measures, repeated by `scripts/benchmark.jl` — on a 4-core Intel Xeon @ 2.8 GH
 
 | experiment | Julia, 4 threads | Julia, 1 thread | PyTorch, same CPU | PyTorch, A100 |
 |:--|--:|--:|--:|--:|
-| real data: 4 sites × 9 transitions, 3 steps/week | 13.7 | 26.5 | 59.3 | 12.1 |
-| synthetic, 4 sites: 128×128, 10 transitions, 2 steps/week | 4.5 | 14.5 | | 3.8 |
-| synthetic, 1 site | 4.1 | 3.4 | | 0.97 |
+| real data: 4 sites × 9 transitions, 3 steps/week | 13.7 | 26.5 | 62.2 | 12.1 |
+| synthetic, 4 sites: 128×128, 10 transitions, 2 steps/week | 4.5 | 14.5 | 19.2 | 3.8 |
+| synthetic, 1 site | 4.1 | 3.4 | 4.5 | 0.97 |
 
 The A100 column is `runtime_estimates.csv` in the repository root, recorded with
-`measure_runtime.py`. The PyTorch CPU figure is PyTorch 2.14 in float32 on four
-threads with gradient checkpointing on (90.9 s in float64).
+`measure_runtime.py`; the PyTorch CPU column is the same script with `--cpu`
+(PyTorch 2.14, float32, four threads) on the machine of the Julia columns.
 
 A full real-data fit (7500 epochs) thus takes ~29 h on these four cores: about
-what the A100 needs (25 h), and a quarter of PyTorch's time on the same CPU. Four
-threads speed it up only 1.9×, because the largest site (c, 148×211) sets the
-pace; the four equal synthetic sites get 3.2×, and keep pace with the A100. A
-one-site fit runs on one core, about 3.5 times slower than on the GPU.
+what the A100 needs (25 h), and 4.5 times faster than PyTorch on the same CPU
+(130 h). Four threads speed it up only 1.9×, because the largest site (c,
+148×211) sets the pace; the four equal synthetic sites get 3.2× and keep pace
+with the A100. A one-site fit runs on one core, 3.5 times slower than the A100.
 
 - **Where the time goes.** On site b (131×140) a step takes 0.70 ms and its
   vector–Jacobian product 2.47 ms; on site c (148×211), 2.01 and 5.72 ms. A
@@ -321,8 +324,10 @@ one-site fit runs on one core, about 3.5 times slower than on the GPU.
   (`InverseProblem(...; threaded = true)`, the default with more than one thread),
   `train_many(...; parallel = :runs)` runs restarts in parallel, and
   `bifurcation_sweep` its rain levels. A single site uses one core.
-- **Compilation.** The first loss of a session compiles in seconds, the first Enzyme
-  gradient in about 1.5 minutes.
+- **Compilation.** In a fresh session, loading the package with
+  `OrdinaryDiffEqLowOrderRK` and `SciMLSensitivity` takes 12 s; the first loss
+  compiles in 4 s, the first Enzyme gradient in 100 s, the first ODE loss in 13 s
+  and the first adjoint gradient in 27 s.
 
 ## Numerics
 
