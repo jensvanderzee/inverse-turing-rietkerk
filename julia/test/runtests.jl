@@ -613,6 +613,9 @@ const P_PERT = RietkerkParams(paramvector(SYNTHETIC_TRUTH) .* FACTORS)
 
     # =======================================================================
     @testset "continuous model (DifferentialEquations.jl + SciMLSensitivity)" begin
+        # The solver packages export `step!` too; it must stay one function.
+        @test step! === InverseTuring.step! === OrdinaryDiffEqTsit5.step!
+
         prob = small_problem(; ntrans = 2)
         ode = with_discretisation(prob, ODEConfig(Tsit5(); abstol = 1e-10, reltol = 1e-10))
         @test ode.cfg isa ODEConfig

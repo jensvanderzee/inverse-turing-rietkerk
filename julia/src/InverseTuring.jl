@@ -56,6 +56,10 @@ import CSV
 import DataFrames
 import JSON
 import Pickle
+# `step!` adds methods to CommonSolve's function, which the DifferentialEquations.jl
+# packages export under the same name; a separate function would make the name
+# ambiguous in any session that loads both.
+import CommonSolve: step!
 
 export RietkerkParams, PARAM_NAMES, NPARAMS, PARAM_SYMBOLS, PRETTY_NAMES, paramvector,
        paramdict, randparams, RIETKERK_2002, SYNTHETIC_TRUTH, REALDATA_REFERENCE,

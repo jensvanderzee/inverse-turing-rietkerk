@@ -2,7 +2,7 @@
 
 julia_version = "1.12.7"
 manifest_format = "2.0"
-project_hash = "2b63148734880104709666ed9d6c450d8f85a25f"
+project_hash = "a72c0310f3bfde9115b52e97f303d32a58edcb3b"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -1081,7 +1081,7 @@ weakdeps = ["Dates", "Test"]
     InverseFunctionsTestExt = "Test"
 
 [[deps.InverseTuring]]
-deps = ["ArchGDAL", "CSV", "DataFrames", "DiffResults", "Enzyme", "EnzymeCore", "FFTW", "ForwardDiff", "JSON", "LinearAlgebra", "OrdinaryDiffEqBDF", "OrdinaryDiffEqCore", "OrdinaryDiffEqExponentialRK", "OrdinaryDiffEqLowOrderRK", "OrdinaryDiffEqRosenbrock", "OrdinaryDiffEqSDIRK", "OrdinaryDiffEqStabilizedRK", "OrdinaryDiffEqTsit5", "Pickle", "Plots", "Printf", "Random", "SciMLBase", "SciMLSensitivity", "SparseArrays", "Statistics"]
+deps = ["ArchGDAL", "CSV", "CommonSolve", "DataFrames", "DiffResults", "Enzyme", "EnzymeCore", "FFTW", "ForwardDiff", "JSON", "LinearAlgebra", "OrdinaryDiffEqBDF", "OrdinaryDiffEqCore", "OrdinaryDiffEqExponentialRK", "OrdinaryDiffEqLowOrderRK", "OrdinaryDiffEqRosenbrock", "OrdinaryDiffEqSDIRK", "OrdinaryDiffEqStabilizedRK", "OrdinaryDiffEqTsit5", "Pickle", "Plots", "Printf", "Random", "SciMLBase", "SciMLSensitivity", "SparseArrays", "Statistics"]
 path = "."
 uuid = "3f1a7c0e-9d62-4b48-8e3a-5c1f6d2b7a91"
 version = "0.2.0"

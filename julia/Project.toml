@@ -6,6 +6,7 @@ authors = ["Jens van der Zee <jens.vanderzee@wur.nl>"]
 [deps]
 ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DiffResults = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
@@ -38,6 +39,7 @@ InverseTuringSciMLSensitivityExt = ["SciMLSensitivity", "OrdinaryDiffEqCore", "S
 [compat]
 ArchGDAL = "0.10.11"
 CSV = "0.10.16"
+CommonSolve = "0.2.11"
 DataFrames = "1.8.2"
 DiffResults = "1.1.0"
 Enzyme = "0.13.209"
