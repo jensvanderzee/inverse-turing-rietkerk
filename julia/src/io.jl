@@ -55,7 +55,7 @@ end
 """
     params_from_row(row) -> RietkerkParams{Float64}
 
-Extract the nine coefficients from one row of a parameter table.
+Extract the eleven coefficients from one row of a parameter table.
 """
 params_from_row(row) = RietkerkParams(Dict(n => Float64(row[n]) for n in PARAM_NAMES))
 
@@ -86,16 +86,20 @@ end
 """
     save_run(path, result; metadata = Dict())
 
-Serialise a [`TrainResult`](@ref) to JSON, using the same key names as the Python
-`result_dict` (`initial_params`, `parameter_history`, `loss_history`, ...).
+Serialise a [`TrainResult`](@ref) to JSON with the key names of the Python
+`result_dict` (`initial_params`, `init_draws`, `parameter_history`, `loss_history`,
+`num_epochs`, `final_loss`, `elapsed_seconds`, ...). `metadata` adds keys such as
+`run_id` or `ground_truth`.
 """
 function save_run(path::AbstractString, r::TrainResult; metadata::AbstractDict = Dict{String,Any}())
     payload = Dict{String,Any}(
         "seed" => r.seed,
         "initial_params" => paramdict(r.initial_params),
+        "init_draws" => r.init_draws,
         "final_params" => paramdict(r.params),
         "parameter_history" => r.parameter_history,
         "loss_history" => r.loss_history,
+        "gradnorm_history" => r.gradnorm_history,
         "num_epochs" => r.epochs_run,
         "final_loss" => r.final_loss,
         "elapsed_seconds" => r.elapsed_seconds,

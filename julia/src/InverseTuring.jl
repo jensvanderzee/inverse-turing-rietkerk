@@ -1,71 +1,91 @@
 """
     InverseTuring
 
-Julia port of the inverse-PDE pipeline that fits a Rietkerk-type dryland
-vegetation model to satellite NDVI time series.
+Julia implementation of the inverse-PDE pipeline that fits the Rietkerk et al.
+(2002) dryland vegetation model to satellite NDVI time series — the counterpart of
+`rietkerk_model.py` and the training, testing and analysis scripts around it.
 
-The model is three coupled reaction–diffusion fields — surface water, soil water,
-biomass — integrated with explicit Euler on a 5-point Laplacian. Nine scalar
-ecological coefficients are recovered by differentiating the whole multi-year
-rollout and descending on the mismatch between predicted and observed year-on-year
+The model has three coupled reaction–diffusion fields (surface water `O`, soil
+water `W`, biomass `B`) and eleven coefficients, fitted by differentiating a
+multi-year rollout driven by weekly rainfall against the observed year-on-year
 change in biomass.
 
-Layout:
+Two discretisations, one loss:
 
-| file             | contents                                                  |
-|:-----------------|:----------------------------------------------------------|
-| `parameters.jl`  | [`RietkerkParams`](@ref), presets, vector/dict conversions |
-| `operators.jl`   | [`laplacian!`](@ref) with replicate boundaries             |
-| `model.jl`       | [`step!`](@ref), [`simulate_year!`](@ref), [`SimConfig`](@ref) |
-| `forcing.jl`     | weekly precipitation profiles                              |
-| `realdata.jl`    | GeoTIFF NDVI + ERA5 precipitation loading                  |
-| `problem.jl`     | [`InverseProblem`](@ref), [`loss`](@ref), [`evaluate`](@ref) |
-| `synthetic.jl`   | ground-truth data generation                               |
-| `optim.jl`       | PyTorch-compatible Adam                                    |
-| `train.jl`       | [`train`](@ref) and its configuration                      |
-| `analysis.jl`    | Turing/composite diagnostics, filtering, bifurcation sweep |
-| `io.jl`          | JSON/CSV/pickle interoperability with the Python results   |
+- [`SimConfig`](@ref): the fixed-step semi-implicit scheme of the Python code,
+  term for term (implicit diffusion solved exactly with FFTW's DCT). Gradients by
+  Enzyme reverse mode ([`EnzymeBackend`](@ref), the default) or ForwardDiff.
+- [`ODEConfig`](@ref): the continuous PDE by method of lines with any
+  DifferentialEquations.jl solver (extension, `using OrdinaryDiffEq…`), gradients
+  by SciMLSensitivity adjoints with Enzyme VJPs (`AdjointODEBackend`, extension,
+  `using SciMLSensitivity`) or ForwardDiff through the solver.
 
-Element type is a free choice: `Float64` (default) is the better base for fitting,
-`Float32` reproduces the original PyTorch arithmetic. Array type is free too — the
-kernels have a scalar-indexing-free fallback, so a GPU array works by construction,
-though only the CPU path is exercised by the test suite.
+| file              | contents                                                     |
+|:------------------|:-------------------------------------------------------------|
+| `parameters.jl`   | [`RietkerkParams`](@ref), reference values, units, bounds    |
+| `operators.jl`    | Laplacian, exact implicit diffusion (FFTW / dual / dense)    |
+| `model.jl`        | [`step!`](@ref), [`simulate_year!`](@ref), viable random starts |
+| `forcing.jl`      | weekly rainfall profiles                                     |
+| `realdata.jl`     | GeoTIFF NDVI + ERA5 precipitation loading                    |
+| `problem.jl`      | [`InverseProblem`](@ref), [`loss`](@ref), [`evaluate`](@ref) |
+| `enzyme_rules.jl` | Enzyme rule for the FFTW diffusion solve                     |
+| `gradients.jl`    | gradient backends                                            |
+| `synthetic.jl`    | synthetic experiments                                        |
+| `optim.jl`        | PyTorch-compatible Adam                                      |
+| `train.jl`        | [`train`](@ref), [`train_many`](@ref)                        |
+| `analysis.jl`     | Turing/composite diagnostics, run filters, bifurcation sweep |
+| `io.jl`           | JSON/CSV/pickle interoperability with the Python results     |
+| `diffeq.jl`       | [`ODEConfig`](@ref) and the method-of-lines right-hand side  |
 """
 module InverseTuring
 
 using Printf: @printf, @sprintf
 import Random
 import Statistics
+import LinearAlgebra
 
 import ForwardDiff
 import DiffResults
+import FFTW
+import Enzyme
+import EnzymeCore
+import EnzymeCore.EnzymeRules
 import ArchGDAL
 import CSV
 import DataFrames
 import JSON
 import Pickle
 
-export RietkerkParams, PARAM_NAMES, NPARAMS, paramvector, paramdict, randparams,
-       SYNTHETIC_TRUTH, SYNTHETIC_TRUTH_1SITE, REALDATA_REFERENCE
-export laplacian, laplacian!
-export SimConfig, SimState, simstate, copystate, step!, simulate_year!, simulate_years!,
-       diffusion_stability_limit, spectral_bound, max_stable_dt, stability_ratio,
-       check_stability
+export RietkerkParams, PARAM_NAMES, NPARAMS, PARAM_SYMBOLS, PRETTY_NAMES, paramvector,
+       paramdict, randparams, RIETKERK_2002, SYNTHETIC_TRUTH, REALDATA_REFERENCE,
+       rietkerk_reference, realdata_reference, to_physical_units, parameter_bounds,
+       log_bounds, clamp_to_bounds, degenerate_parameters, PLANT_TIMESCALE_FACTOR,
+       DAYS_PER_YEAR, NDVI_TO_BIOMASS_MULTIPLIER, SYNTHETIC_PIXEL_SIZE_M, REALDATA_PIXEL_SIZE_M
+export laplacian, laplacian!, implicit_diffusion!, DiffusionSolver,
+       MatrixDiffusionSolver, diffusion_solver
+export AbstractDiscretisation, SimConfig, SimState, SimWorkspace, simstate, workspace,
+       copystate, copystate!, step!, simulate_week!, simulate_year!, simulate_years!,
+       spectral_bound, max_stable_dt, keeps_vegetation, draw_viable_params
 export sinusoidal_weekly_precip, summer_weekly_precip, uniform_weekly_precip, annual_total
 export ndvi_biomass, YearObservation, SiteSeries, load_site, load_sites, biomass_stats,
        read_annual_precip, read_weekly_precip, years
 export SiteTrajectory, InverseProblem, loss, trajectory_loss, evaluate, ntransitions,
-       rethread, mean_squared_delta_error, mean_squared_error
-export equilibrium_biomass, synthetic_series, synthetic_experiment
+       rethread, with_discretisation, viability_sites, mean_squared_delta_error,
+       mean_squared_error
+export AbstractGradientBackend, EnzymeBackend, ForwardDiffBackend, FiniteDiffBackend,
+       AdjointODEBackend, gradient_cache, loss_and_gradient, loss_and_gradient!
+export equilibrium_biomass, synthetic_series, synthetic_experiment, SYNTHETIC_PRESETS
 export AdamState, adam_step!, clip_global_norm!, decay_lr!
-export TrainConfig, SYNTHETIC_TRAIN_CONFIG, TrainResult, train, train_many,
-       loss_and_gradient, DEFAULT_CHUNK, autotune_chunk
-export turing_value, composite_value, mean_training_biomass, tier1_filter,
-       drop_degenerate, agreement_table, bifurcation_sweep
+export TrainConfig, REALDATA_TRAIN_CONFIG, SYNTHETIC_TRAIN_CONFIG, SYNTHETIC_1SITE_TRAIN_CONFIG,
+       TrainResult, train, train_many
+export homogeneous_steady_state, reaction_jacobian, growth_rates, turing_value,
+       turing_wavelength, composite_value, mean_training_biomass,
+       mean_training_precipitation, tier1_filter, drop_degenerate, agreement_table,
+       bifurcation_sweep
 export load_parameter_history, load_parameter_histories, read_parameter_table,
        params_from_row, write_parameter_table, save_run, load_run, save_json
-export WeeklyForcing, week_boundaries, rietkerk_rhs!, pack_state, unpack_state,
-       biomass_of, solve_year, simulate_years_ode, ode_loss
+export ODEConfig, rietkerk_rhs!, ode_parameters, pack_state, unpack_state, biomass_of,
+       solve_week!, simulate_years_ode
 
 include("parameters.jl")
 include("operators.jl")
@@ -73,6 +93,8 @@ include("model.jl")
 include("forcing.jl")
 include("realdata.jl")
 include("problem.jl")
+include("enzyme_rules.jl")
+include("gradients.jl")
 include("synthetic.jl")
 include("optim.jl")
 include("train.jl")
