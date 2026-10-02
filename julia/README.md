@@ -221,12 +221,12 @@ reltol = 1e-4`.
   Enzyme differentiating a dense-matrix solve that needs no rule, and against
   finite differences).
 - **Cost.** A step's vector–Jacobian product costs 2.8–3.5× the step and allocates
-  nothing. A full gradient costs about five losses: the forward pass, recomputing
+  nothing. A full gradient costs four to five losses: the forward pass, recomputing
   each week from its checkpoint, and the products. ForwardDiff takes ten to twelve
   times as long for the eleven parameters, because every partial rides through
   every FFT.
 - **Accuracy.** Matches ForwardDiff to 1e-13 and PyTorch's autograd to 1e-8.
-- **Caveats.** The first gradient in a session compiles for 1.5–2 minutes. And with
+- **Caveats.** The first gradient in a session compiles for about 1.5 minutes. And with
   Enzyme 0.13.209 on Julia 1.12.7, differentiating a runtime-length loop around the
   step function — a whole week per `autodiff` call — corrupted the heap after about
   4000 calls (the garbage collector then segfaults), with or without threads; a
@@ -298,22 +298,23 @@ measures, repeated by `scripts/benchmark.jl` — on a 4-core Intel Xeon @ 2.8 GH
 
 | experiment | Julia, 4 threads | Julia, 1 thread | PyTorch, same CPU | PyTorch, A100 |
 |:--|--:|--:|--:|--:|
-| real data: 4 sites × 9 transitions, 3 steps/week | 14.0 | 30.7 | 59.3 | 12.1 |
-| synthetic, 4 sites: 128×128, 10 transitions, 2 steps/week | 4.2 | | | 3.8 |
-| synthetic, 1 site | 4.3 | | | 0.97 |
+| real data: 4 sites × 9 transitions, 3 steps/week | 13.7 | 26.5 | 59.3 | 12.1 |
+| synthetic, 4 sites: 128×128, 10 transitions, 2 steps/week | 4.5 | 14.5 | | 3.8 |
+| synthetic, 1 site | 4.1 | 3.4 | | 0.97 |
 
 The A100 column is `runtime_estimates.csv` in the repository root, recorded with
 `measure_runtime.py`. The PyTorch CPU figure is PyTorch 2.14 in float32 on four
 threads with gradient checkpointing on (90.9 s in float64).
 
 A full real-data fit (7500 epochs) thus takes ~29 h on these four cores: about
-what the A100 needs (25 h), and a quarter of PyTorch's time on the same CPU. The
-four-site synthetic fit keeps pace with the A100; the one-site fit, with no sites
-to spread over threads, is about four times slower than on the GPU.
+what the A100 needs (25 h), and a quarter of PyTorch's time on the same CPU. Four
+threads speed it up only 1.9×, because the largest site (c, 148×211) sets the
+pace; the four equal synthetic sites get 3.2×, and keep pace with the A100. A
+one-site fit runs on one core, about 3.5 times slower than on the GPU.
 
 - **Where the time goes.** On site b (131×140) a step takes 0.70 ms and its
   vector–Jacobian product 2.47 ms; on site c (148×211), 2.01 and 5.72 ms. A
-  gradient costs 4.5–5.5 losses. Neither allocates.
+  gradient costs four to five losses. Neither allocates.
 - **Memory.** The weekly checkpoints of the four real-data sites over nine years
   take ~0.9 GB (PyTorch without gradient checkpointing peaks at 6.8 GB on the GPU).
 - **Threads.** Start Julia with `-t auto`. The sites of one loss run in parallel
@@ -321,7 +322,7 @@ to spread over threads, is about four times slower than on the GPU.
   `train_many(...; parallel = :runs)` runs restarts in parallel, and
   `bifurcation_sweep` its rain levels. A single site uses one core.
 - **Compilation.** The first loss of a session compiles in seconds, the first Enzyme
-  gradient in 1.5–2 minutes, the first adjoint gradient in about a minute.
+  gradient in about 1.5 minutes.
 
 ## Numerics
 
