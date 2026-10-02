@@ -28,8 +28,9 @@ Usage
     julia --project=julia -t 1 julia/scripts/diffeq_comparison.jl [--implicit] [--only real|synthetic]
 
 `--implicit` also times implicit solvers (KenCarp47, Rodas5P, FBDF) with a sparse
-Jacobian; they are correct but 50–100× slower here, so they are off by default.
-Expect ~30 min single-threaded (the first gradient of each kind compiles).
+Jacobian; they are correct but 40–550× slower here, so they are off by default.
+Expect ~20 min single-threaded without `--implicit` (every timed call runs twice,
+the first to compile) and an hour with it.
 """
 
 using InverseTuring

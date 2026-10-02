@@ -139,48 +139,78 @@ The three libraries do different jobs here:
 **In short:** fit with the fixed-step scheme and Enzyme, as the Python code does —
 it is by far the cheapest gradient — and use DifferentialEquations.jl to check
 what that scheme costs in accuracy. It costs more than one would guess: at the step
-sizes the scripts use, the scheme's loss and gradient are percents away from the
-PDE it discretises, so a fit recovers the parameters of the discretised model.
-Where that matters, SciMLSensitivity gives the gradient of the PDE itself, accurate
-to 1e-5 or better, for about ten times the cost of the fixed-step gradient — less
-than refining the fixed-step scheme to even 1e-3 would cost.
+sizes the scripts use, the scheme's gradient is 6–8 % away from that of the PDE it
+discretises, so a fit recovers the parameters of the discretised model. Where that
+matters, SciMLSensitivity gives the gradient of the PDE itself, accurate to 1e-5
+or better, for 8–30 times the cost of the fixed-step gradient — less than refining
+the fixed-step scheme to even 1e-3 would cost.
 
-Measured on one transition (one site, one year), one thread, compilation excluded,
-with errors relative to the PDE solved at tight tolerance (Tsit5, reltol ≤ 1e-9);
+The measurements below come from `scripts/diffeq_comparison.jl`, on one transition
+(one site, one year) of two setups, at parameters ×0.7–1.4 away from the reference
+so that the gradient is not small. Errors are relative to the PDE solved at tight
+tolerance (Tsit5, reltol 1e-10) with its gradient from the interpolating adjoint;
 the gradient error is ‖g − g_ref‖/‖g_ref‖ over the eleven parameter derivatives.
-`scripts/diffeq_comparison.jl` repeats these comparisons.
+Times are wall-clock seconds on one thread, compilation excluded; they vary by
+10–20 % between runs. Adjoints use Enzyme for the vector–Jacobian products; the
+implicit solvers get the Jacobian's sparsity pattern.
 
-**Real data**: site b (131×140 cells of 30 m) at the real-data reference
-parameters. Adaptive solvers at `abstol = 1e-3, reltol = 1e-4`; adjoints are
-`InterpolatingAdjoint(autojacvec = EnzymeVJP())`.
+**Real data**: site b, 131×140 cells of 30 m. Adaptive solvers at `abstol = 1e-3,
+reltol = 1e-4` (biomass is up to 1500).
 
-| method | loss (s) | gradient (s) | loss error | gradient error |
+| method | loss (s) | loss error | gradient (s) | gradient error |
 |:--|--:|--:|--:|--:|
-| fixed-step, 3 steps/week + Enzyme (the Python setting) | 0.12 | 0.55 | 1.3e-2 | 3.2e-2 |
-| fixed-step, 3 steps/week + ForwardDiff | | 6.47 | | 3.2e-2 |
-| fixed-step, 12 steps/week + Enzyme | | 2.27 | 3.5e-3 | 8.7e-3 |
-| fixed-step, 48 steps/week + Enzyme | | 8.44 | 8.8e-4 | 2.2e-3 |
-| BS3 + adjoint | 0.69 | 5.86 | 8.3e-8 | 5.4e-6 |
-| Tsit5 + adjoint | 0.68 | 8.96 | 5.9e-8 | 5.6e-8 |
-| ROCK4 + adjoint | 1.06 | 10.0 | 1.8e-7 | 7.9e-7 |
-| BS3 + ForwardDiff through the solver | | 22.0 | | 1.5e-6 |
+| fixed-step, 1 step/week | 0.041 | 1.6e-2 | 0.18 | 1.7e-1 |
+| fixed-step, 2 steps/week | 0.083 | 7.9e-3 | 0.44 | 8.6e-2 |
+| **fixed-step, 3 steps/week (Python)** | 0.12 | 5.3e-3 | 0.66 | 5.8e-2 |
+| fixed-step, 4 steps/week | 0.16 | 3.9e-3 | 0.90 | 4.4e-2 |
+| fixed-step, 8 steps/week | 0.45 | 2.0e-3 | 2.03 | 2.2e-2 |
+| fixed-step, 16 steps/week | 0.59 | 9.9e-4 | 5.17 | 1.1e-2 |
+| fixed-step, 48 steps/week | 1.48 | 3.3e-4 | 7.39 | 3.7e-3 |
+| fixed-step, 3 steps/week, ForwardDiff gradient | | | 7.60 | 5.8e-2 |
+| BS3 | 0.91 | 9.1e-9 | | |
+| &nbsp;&nbsp;+ InterpolatingAdjoint | | | 6.36 | 4.4e-6 |
+| &nbsp;&nbsp;+ GaussAdjoint | | | 5.11 | 6.7e-6 |
+| &nbsp;&nbsp;+ QuadratureAdjoint | | | 6.64 | 6.5e-6 |
+| &nbsp;&nbsp;+ ForwardDiff through the solver | | | 19.7 | 9.1e-7 |
+| Tsit5 | 0.74 | 6.1e-9 | | |
+| &nbsp;&nbsp;+ InterpolatingAdjoint | | | 8.05 | 1.2e-8 |
+| &nbsp;&nbsp;+ GaussAdjoint | | | 6.85 | 8.9e-7 |
+| &nbsp;&nbsp;+ QuadratureAdjoint | | | 7.60 | 9.3e-7 |
+| ROCK2 | 2.50 | 2.2e-6 | | |
+| ROCK4 | 1.02 | 2.0e-8 | | |
+| KenCarp47 (sparse J) | 449 | 2.4e-5 | | |
+| Rodas5P (sparse J) | 172 | 4.6e-9 | | |
+| FBDF (sparse J) | 559 | 3.4e-7 | | |
 
-**Synthetic**: a 64×64 equilibrium field on 5 m cells at `SYNTHETIC_TRUTH`, one
-year forward. Surface-water diffusion makes this one stiff: its fastest rate is
-8·D_O = 32 per day, against ~1 per day on 30 m cells. Adaptive solvers at
-`abstol = 1e-5, reltol = 1e-6`.
+**Synthetic**: a 64×64 equilibrium field on 5 m cells, one year of the synthetic
+rain. Surface-water diffusion makes this one stiff: its fastest rate is 8·D_O ≈ 40
+per day, against ~1 per day on 30 m cells. Adaptive solvers at `abstol = 1e-5,
+reltol = 1e-4`.
 
-| method | time (s) | error in the year's biomass change |
-|:--|--:|--:|
-| fixed-step, 2 steps/week (the Python setting) | 0.022 | 1.1e-1 |
-| fixed-step, 8 steps/week | 0.064 | 3.3e-2 |
-| fixed-step, 32 steps/week | 0.24 | 8.5e-3 |
-| ROCK4 | 0.61 | 6.5e-9 |
-| Tsit5 | 1.64 | 2.4e-12 |
-| ROCK2 | 1.80 | 1.2e-7 |
-| KenCarp47, sparse Jacobian | 38 | 2.1e-8 |
-| Rodas5P, sparse Jacobian | 39 | 1.8e-9 |
-| FBDF, sparse Jacobian | 63 | 2.1e-7 |
+| method | loss (s) | loss error | gradient (s) | gradient error |
+|:--|--:|--:|--:|--:|
+| fixed-step, 1 step/week | 0.012 | 1.0e-1 | 0.049 | 1.5e-1 |
+| **fixed-step, 2 steps/week (Python)** | 0.020 | 5.5e-2 | 0.12 | 7.9e-2 |
+| fixed-step, 3 steps/week | 0.041 | 3.7e-2 | 0.15 | 5.4e-2 |
+| fixed-step, 4 steps/week | 0.044 | 2.8e-2 | 0.17 | 4.1e-2 |
+| fixed-step, 8 steps/week | 0.086 | 1.4e-2 | 0.43 | 2.1e-2 |
+| fixed-step, 16 steps/week | 0.15 | 7.1e-3 | 0.73 | 1.0e-2 |
+| fixed-step, 48 steps/week | 0.44 | 2.4e-3 | 2.23 | 3.5e-3 |
+| fixed-step, 2 steps/week, ForwardDiff gradient | | | 1.12 | 7.9e-2 |
+| BS3 | 1.49 | 7.1e-11 | | |
+| Tsit5 | 2.51 | 3.3e-13 | | |
+| &nbsp;&nbsp;+ InterpolatingAdjoint | | | 20.5 | 2.1e-6 |
+| &nbsp;&nbsp;+ GaussAdjoint | | | 21.8 | 1.8e-6 |
+| &nbsp;&nbsp;+ QuadratureAdjoint | | | 24.5 | 1.4e-6 |
+| ROCK2 | 0.65 | 2.5e-6 | | |
+| ROCK4 | 0.52 | 5.6e-9 | | |
+| &nbsp;&nbsp;+ InterpolatingAdjoint | | | 3.08 | 6.5e-8 |
+| &nbsp;&nbsp;+ GaussAdjoint | | | 4.06 | 2.6e-7 |
+| &nbsp;&nbsp;+ QuadratureAdjoint | | | 2.81 | 2.5e-7 |
+| &nbsp;&nbsp;+ ForwardDiff through the solver | | | 18.5 | 4.1e-9 |
+| KenCarp47 (sparse J) | 28.6 | 6.5e-8 | | |
+| Rodas5P (sparse J) | 22.6 | 1.7e-9 | | |
+| FBDF (sparse J) | 31.0 | 4.1e-7 | | |
 
 ### Enzyme
 
@@ -191,9 +221,10 @@ year forward. Surface-water diffusion makes this one stiff: its fastest rate is
   Enzyme differentiating a dense-matrix solve that needs no rule, and against
   finite differences).
 - **Cost.** A step's vector–Jacobian product costs 2.8–3.5× the step and allocates
-  nothing. A full gradient costs 4.5–5.5 losses: the forward pass, recomputing each
-  week from its checkpoint, and the products. ForwardDiff takes about twelve times
-  as long for the eleven parameters, because every partial rides through every FFT.
+  nothing. A full gradient costs about five losses: the forward pass, recomputing
+  each week from its checkpoint, and the products. ForwardDiff takes ten to twelve
+  times as long for the eleven parameters, because every partial rides through
+  every FFT.
 - **Accuracy.** Matches ForwardDiff to 1e-13 and PyTorch's autograd to 1e-8.
 - **Caveats.** The first gradient in a session compiles for 1.5–2 minutes. And with
   Enzyme 0.13.209 on Julia 1.12.7, differentiating a runtime-length loop around the
@@ -208,19 +239,20 @@ year forward. Surface-water diffusion makes this one stiff: its fastest rate is
 
 - **What it showed.** The fixed-step scheme is first order — the error halves when
   the step does — and at the scripts' settings it is not small: at 3 steps per week
-  on site b the loss is off by 1.3 % and the gradient by 3.2 %, and at 2 steps per
-  week on 5 m cells the year's biomass change is off by 11 %. The
-  synthetic experiments are self-consistent (data and fit use the same scheme), so
-  they still recover their truth; the error matters when fitted values are compared
-  with Rietkerk's, or with fits at another step size or resolution.
-- **Which solver.** On 30 m cells the system is not stiff and explicit adaptive
-  methods do best: `BS3` or `Tsit5` solve a year in ~0.7 s to 1e-7, against 0.12 s
-  for the fixed-step scheme at 1e-2. On 5 m cells it is stiff, and the stabilised
-  explicit `ROCK4` is the fastest accurate method, well ahead of `Tsit5`, whose
+  on site b the loss is off by 0.5 % and the gradient by 6 %; at 2 steps per week on
+  5 m cells, by 5 % and 8 %. The synthetic experiments are self-consistent (data and
+  fit use the same scheme), so they still recover their truth; the error matters
+  when fitted values are compared with Rietkerk's, or with fits at another step
+  size or resolution.
+- **Which solver.** On 30 m cells the system is not stiff and the explicit adaptive
+  methods do best: `Tsit5` or `BS3` solve a year in 0.7–0.9 s to 1e-8, against
+  0.12 s for the fixed-step scheme at 5e-3. On 5 m cells it is stiff, and the
+  stabilised explicit `ROCK4` is fastest (0.5 s to 6e-9), ahead of `Tsit5`, whose
   steps are then limited by stability rather than accuracy. Implicit solvers
   (`KenCarp47`, `Rodas5P`, `FBDF`) work once given the Jacobian's sparsity pattern
-  (`ODEConfig(alg; sparse_jacobian = true)`), but each step factorises a sparse
-  matrix with 3HW rows, and here they are 60–100× slower than `ROCK4`.
+  (`ODEConfig(alg; sparse_jacobian = true)`), but every step factorises a sparse
+  matrix with 3HW rows: they are 40–60× slower than `ROCK4` on the stiff grid and
+  170–550× slower on the real one.
 - **Forcing.** Rain changes weekly, so each week is its own ODE segment (see
   [Numerics](#numerics)); a `reinit!`-ed integrator keeps that cheap.
 
@@ -237,12 +269,15 @@ year forward. Surface-water diffusion makes this one stiff: its fastest rate is
   `dgdu_discrete`, carries the adjoint to the week's start. Keeping every week's
   dense solution instead would take tens of gigabytes.
 - **Accuracy.** The three adjoints agree with ForwardDiff through the solver to
-  1e-12 when both solve tightly (test suite).
-- **Cost.** On site b the adjoint gradient takes 5.9 s with `BS3` (error 5e-6)
-  and 9 s with `Tsit5` (6e-8), against 0.55 s for the fixed-step Enzyme gradient
-  (3e-2) and 8.4 s for the fixed-step gradient at 48 steps per week, which is still
-  off by 2e-3. ForwardDiff through the solver works too, at about four times the
-  cost of the adjoint.
+  ~1e-12 when both solve tightly, and with the tight reference to 1e-5 or better at
+  the loose tolerances above.
+- **Cost.** On site b an adjoint gradient takes 5–8 s (error 1e-8–7e-6), against
+  0.66 s for the fixed-step Enzyme gradient (6e-2) and 7.4 s for the fixed-step
+  gradient at 48 steps per week, which is still off by 4e-3. On the stiff synthetic
+  grid, `ROCK4` with an adjoint takes 3–4 s (≤ 3e-7) against 0.12 s for the
+  fixed-step gradient (8e-2). The three adjoints cost about the same here.
+  ForwardDiff through the solver works too, at three to six times the cost of an
+  adjoint.
 
 ### Recommendation
 
@@ -332,14 +367,13 @@ next week's rate. One integrator is `reinit!`-ed per week.
 ## Things worth knowing
 
 **The fixed-step scheme is a first-order approximation of the PDE, and not a
-close one at the steps the scripts use.** See the evaluation above: at 3 steps per
-week the real-data loss and gradient are off by percents, and at 2 steps per week
-on 5 m cells the yearly biomass change of the synthetic experiments is off by about
-11 %. The synthetic experiments are self-consistent (data and fit use the same
-scheme), but the parameters the real-data fits recover are those of the
-discretised model; comparing them with Rietkerk's per-day values carries that
-error. `with_discretisation(prob, ODEConfig(...))` evaluates any fit on the
-converged PDE.
+close one at the steps the scripts use**: its gradient is 6–8 % off the PDE's (see
+[the evaluation](#enzyme-differentialequationsjl-and-scimlsensitivityjl-on-this-problem)).
+The synthetic experiments are self-consistent (data and fit use the same scheme),
+but the parameters the real-data fits recover are those of the discretised model,
+and comparing them with Rietkerk's per-day values carries that error.
+`with_discretisation(prob, ODEConfig(...))` evaluates or continues any fit on the
+PDE itself.
 
 **Precision.** `Float64` throughout by default (PyTorch trains in float32). The
 solver, the step and the Enzyme rule also run in `Float32`
