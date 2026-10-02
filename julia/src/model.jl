@@ -356,7 +356,7 @@ thing the data show for certain, that there is vegetation, at the cost of one
 forward rollout per draw. Warns and returns the last draw if none qualifies.
 """
 function draw_viable_params(rng::Random.AbstractRNG, reference::RietkerkParams, sites,
-                            cfg::SimConfig; max_draws::Integer = 100, decades::Real = 1.0,
+                            cfg::AbstractDiscretisation; max_draws::Integer = 100, decades::Real = 1.0,
                             bound_decades::Real = 4.0, min_fraction::Real = 0.1,
                             max_fraction::Real = 10.0)
     p = reference

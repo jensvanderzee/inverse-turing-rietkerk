@@ -28,8 +28,12 @@ same role keep their old names (`seepage_rate` = r_w, `mortality_rate` = d,
 `evaporation_rate` is gone, and `uptake_half_saturation` (k₁),
 `infiltration_half_saturation` (k₂) and `bare_soil_infiltration` (W₀) are new.
 
-The pipeline is written in PyTorch. `julia/` holds a Julia port of the **previous**
-(Siero) backbone; it has not been converted (see [`julia/README.md`](julia/README.md)).
+The pipeline is written in PyTorch. `julia/` holds `InverseTuring.jl`, a Julia
+implementation of the same pipeline on the Rietkerk backbone: it reproduces
+`rietkerk_model.py` (losses and autograd gradients to 1e-8 or better, checked
+against values the Python code writes), differentiates the rollout with Enzyme,
+and can also pose the fit on the continuous PDE with DifferentialEquations.jl and
+SciMLSensitivity.jl. See [`julia/README.md`](julia/README.md).
 
 ## The Rietkerk backbone: what changed and why
 
@@ -97,7 +101,7 @@ downstream script reads from there.
 | `*.py` (root) | Training, testing and analysis scripts, listed below |
 | `*.sh` | SLURM job scripts used on the HPC cluster |
 | `python_1site/` | Driver that fits the real-data model on a single site |
-| `julia/` | `InverseTuring.jl`, a Julia port of the previous (Siero) backbone |
+| `julia/` | `InverseTuring.jl`, the Julia implementation of the pipeline (Rietkerk backbone) |
 
 **`results/` is not included in this repository.** Every training script writes
 to it, and the analysis and plotting scripts read from it, so run the
@@ -200,8 +204,8 @@ packages:
 - `download_era5_precip.py`: `cdsapi`, `xarray`, `netcdf4`
 - `download_*_gee.py`, `download_missing_weekly_precip.py`: `earthengine-api`
 
-A GPU is recommended for training. For the Julia port, see
-[`julia/README.md`](julia/README.md).
+A GPU is recommended for training. For the Julia implementation (CPU, Julia ≥ 1.12),
+see [`julia/README.md`](julia/README.md).
 
 ## Running on the cluster
 

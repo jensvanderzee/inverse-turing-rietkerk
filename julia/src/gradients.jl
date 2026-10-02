@@ -7,7 +7,7 @@ log θ, multiplies by θ itself).
 
 | backend                  | differentiates                           | cost per gradient          |
 |:-------------------------|:-----------------------------------------|:---------------------------|
-| [`EnzymeBackend`](@ref)  | the fixed-step scheme, reverse mode      | ~3–4 rollouts, O(weeks) memory |
+| [`EnzymeBackend`](@ref)  | the fixed-step scheme, reverse mode      | ~5 rollouts, O(weeks) memory |
 | [`ForwardDiffBackend`](@ref) | the fixed-step scheme, forward mode  | ~(1 + 11/chunk) rollouts of dual numbers |
 | [`FiniteDiffBackend`](@ref) | the fixed-step scheme, central differences | 22 rollouts, for checks only |
 | `AdjointODEBackend`      | the continuous PDE (DifferentialEquations.jl + SciMLSensitivity), see `ext/` | solver dependent |
@@ -22,15 +22,15 @@ abstract type AbstractGradientBackend end
 Reverse-mode AD with Enzyme through the fixed-step scheme — a discrete adjoint, as
 PyTorch's autograd computes it. The forward pass stores the state at every week
 boundary; the reverse pass restores each week, recomputes the states at its step
-boundaries, and lets Enzyme differentiate one step at a time. This is PyTorch's
-`gradient_checkpointing=True` with a fraction of the memory: three fields per
+boundaries, and lets Enzyme differentiate one step at a time — the recomputation
+schedule of PyTorch's `gradient_checkpointing=True`. It stores three fields per
 week, ~200 MB for a 131×140 site over nine years. The diffusion solve (FFTW/BLAS)
 has a hand-written rule (`src/enzyme_rules.jl`); everything else is Enzyme's.
 
 Enzyme differentiates single steps rather than whole weeks on purpose: with
 Enzyme 0.13 on Julia 1.12, differentiating a runtime-length loop around the step
-function corrupts the heap after a few thousand calls (the collector then
-segfaults), while single steps ran 6000 calls clean.
+function corrupted the heap after a few thousand calls (the collector then
+segfaults), while single steps have run over a million calls without a fault.
 """
 struct EnzymeBackend <: AbstractGradientBackend end
 
@@ -184,8 +184,10 @@ function _fill_shadow_seed!(c::EnzymeTrajectoryCache, tr::SiteTrajectory, k::Int
 end
 
 """
-Loss and natural-parameter gradient of one site's summed per-transition MSE, by a
-forward pass with weekly checkpoints and a reverse sweep of per-week Enzyme VJPs.
+Loss and natural-parameter gradient of one site's summed per-transition MSE: a
+forward pass that checkpoints every week boundary, then a reverse sweep that
+recomputes each week's step boundaries from its checkpoint and runs one Enzyme VJP
+per step, seeding the biomass adjoint with ∂L/∂B_k at every year end.
 """
 function trajectory_loss_and_gradient!(g::Vector{Float64}, c::EnzymeTrajectoryCache,
                                        tr::SiteTrajectory, p::RietkerkParams{Float64},

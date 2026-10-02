@@ -26,15 +26,22 @@ last stages of a step that ends on a boundary.
 Biomass is in data units (up to 1500), so set `abstol` to the scale of the data
 (e.g. `1e-3`–`1e-2`) and control accuracy with `reltol`; the SciML default
 `abstol = 1e-6` asks for ten significant digits.
+
+`sparse_jacobian = true` gives implicit solvers (`KenCarp47`, `FBDF`, `Rodas5P`,
+...) the sparsity pattern of the Jacobian ([`rhs_sparsity`](@ref)), so they build
+and factorise a sparse Jacobian; a dense one would need `(3HW)²` entries — 24 GB
+for a 131×140 site. Explicit and stabilised methods (`Tsit5`, `BS3`, `ROCK4`)
+need no Jacobian.
 """
 struct ODEConfig{A,K} <: AbstractDiscretisation
     alg::A
     year_length::Float64
+    sparse_jacobian::Bool
     solver_kwargs::K
 end
 
-ODEConfig(alg; year_length::Real = DAYS_PER_YEAR, kwargs...) =
-    ODEConfig(alg, Float64(year_length), (; kwargs...))
+ODEConfig(alg; year_length::Real = DAYS_PER_YEAR, sparse_jacobian::Bool = false, kwargs...) =
+    ODEConfig(alg, Float64(year_length), sparse_jacobian, (; kwargs...))
 
 describe(cfg::ODEConfig) = "ODE " * string(nameof(typeof(cfg.alg)))
 
@@ -71,6 +78,34 @@ function rietkerk_rhs!(du, u, p, t)
             (gmax * max(B, 0) / (max(W, 0) + k1) + rw) * W
     @. dB = DP * dB + c * gmax * max(W, 0) * max(B, 0) / (max(W, 0) + k1) - d * B
     return nothing
+end
+
+"""
+    rhs_sparsity(H, W) -> SparseMatrixCSC{Float64,Int}
+
+Sparsity pattern of the Jacobian of [`rietkerk_rhs!`](@ref) on an `H×W` grid: each
+field couples to its own 5-point stencil, and the three fields of a cell couple to
+each other.
+"""
+function rhs_sparsity(H::Integer, W::Integer)
+    lin = LinearIndices((H, W, 3))
+    I = Int[]
+    J = Int[]
+    for f in 1:3, j in 1:W, i in 1:H
+        row = lin[i, j, f]
+        for (di, dj) in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1))
+            ii, jj = i + di, j + dj
+            (1 <= ii <= H && 1 <= jj <= W) || continue
+            push!(I, row)
+            push!(J, lin[ii, jj, f])
+        end
+        for g in 1:3
+            g == f && continue
+            push!(I, row)
+            push!(J, lin[i, j, g])
+        end
+    end
+    return SparseArrays.sparse(I, J, ones(length(I)), 3H * W, 3H * W)
 end
 
 """
@@ -173,6 +208,7 @@ AdjointODEBackend(; sensealg = nothing, adjoint_alg = nothing) = AdjointODEBacke
 # Hooks the extensions add methods to; the core only forwards to them.
 function ode_trajectory_loss end
 function ode_gradient_cache end
+function ode_final_biomass end
 
 _diffeq_loaded() = !isempty(methods(ode_trajectory_loss))
 _require_diffeq() = _diffeq_loaded() ||
@@ -181,6 +217,23 @@ _require_diffeq() = _diffeq_loaded() ||
 trajectory_loss(tr::SiteTrajectory, p::RietkerkParams, cfg::ODEConfig, ::Type{T};
                 delta::Bool = true) where {T} =
     (_require_diffeq(); ode_trajectory_loss(tr, p, cfg, T, delta))
+
+"""
+    keeps_vegetation(p, sites, cfg::ODEConfig; min_fraction = 0.1, max_fraction = 10)
+
+The viability screen of random starts, run on the continuous model.
+"""
+function keeps_vegetation(p::RietkerkParams, sites, cfg::ODEConfig;
+                          min_fraction::Real = 0.1, max_fraction::Real = 10.0)
+    _require_diffeq()
+    for (initial, weekly_per_year) in sites
+        final = Statistics.mean(ode_final_biomass(p, initial, weekly_per_year, cfg))
+        start = Statistics.mean(initial)
+        (isfinite(final) && final > min_fraction * start && final < max_fraction * start) ||
+            return false
+    end
+    return true
+end
 
 function gradient_cache(prob::InverseProblem, b::AdjointODEBackend)
     prob.cfg isa ODEConfig ||

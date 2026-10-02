@@ -43,6 +43,7 @@ using Printf: @printf, @sprintf
 import Random
 import Statistics
 import LinearAlgebra
+import SparseArrays
 
 import ForwardDiff
 import DiffResults
@@ -84,8 +85,8 @@ export homogeneous_steady_state, reaction_jacobian, growth_rates, turing_value,
        bifurcation_sweep
 export load_parameter_history, load_parameter_histories, read_parameter_table,
        params_from_row, write_parameter_table, save_run, load_run, save_json
-export ODEConfig, rietkerk_rhs!, ode_parameters, pack_state, unpack_state, biomass_of,
-       solve_week!, simulate_years_ode
+export ODEConfig, rietkerk_rhs!, rhs_sparsity, ode_parameters, pack_state, unpack_state,
+       biomass_of, solve_week!, simulate_years_ode
 
 include("parameters.jl")
 include("operators.jl")

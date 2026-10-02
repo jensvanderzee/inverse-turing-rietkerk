@@ -15,7 +15,7 @@ using InverseTuring
 using InverseTuring: RietkerkParams, ODEConfig, SiteTrajectory, NPARAMS, rietkerk_rhs!,
                      pack_state, biomass_of, mean_squared_delta_error, mean_squared_error,
                      ode_parameters, ode_week_length, ode_rate
-import InverseTuring: solve_week!, simulate_years_ode, ode_trajectory_loss
+import InverseTuring: solve_week!, simulate_years_ode, ode_trajectory_loss, ode_final_biomass
 import SciMLBase
 import OrdinaryDiffEqCore
 import Statistics
@@ -29,10 +29,17 @@ Integrator over one week for the packed state `u` (whose element type may be a
 function week_integrator(u::AbstractArray{T,3}, p::RietkerkParams, cfg::ODEConfig;
                          nweeks::Integer = 52) where {T}
     pvec = convert(Vector{promote_type(T, eltype(p))}, ode_parameters(p, zero(T)))
-    prob = SciMLBase.ODEProblem{true}(rietkerk_rhs!, copy(u), (0.0, ode_week_length(cfg, nweeks)), pvec)
+    prob = SciMLBase.ODEProblem{true}(ode_function(cfg, size(u)), copy(u),
+                                      (0.0, ode_week_length(cfg, nweeks)), pvec)
     return SciMLBase.init(prob, cfg.alg; save_everystep = false, save_start = false,
                           save_end = false, cfg.solver_kwargs...)
 end
+
+"""The right-hand side, with the Jacobian's sparsity pattern when `cfg` asks for it."""
+ode_function(cfg::ODEConfig, dims) =
+    cfg.sparse_jacobian ?
+    SciMLBase.ODEFunction{true}(rietkerk_rhs!; jac_prototype = InverseTuring.rhs_sparsity(dims[1], dims[2])) :
+    SciMLBase.ODEFunction{true}(rietkerk_rhs!)
 
 function _advance!(integ, u::AbstractArray, R, tf::Float64)
     integ.p[end] = R
@@ -77,6 +84,16 @@ function simulate_years_ode(p::RietkerkParams, biomass0::AbstractMatrix,
         callback === nothing || callback(year, u)
     end
     return (u, means)
+end
+
+function ode_final_biomass(p::RietkerkParams, biomass0::AbstractMatrix,
+                           weekly_per_year::AbstractVector, cfg::ODEConfig)
+    u = pack_state(biomass0)
+    integ = week_integrator(u, p, cfg; nweeks = length(first(weekly_per_year)))
+    for weekly in weekly_per_year
+        ode_year!(u, integ, weekly, cfg)
+    end
+    return copy(biomass_of(u))
 end
 
 function ode_trajectory_loss(tr::SiteTrajectory, p::RietkerkParams, cfg::ODEConfig,

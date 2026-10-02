@@ -59,8 +59,11 @@ function ode_gradient_cache(prob::InverseProblem, b::AdjointODEBackend)
                            zeros(n), [zeros(NPARAMS) for _ in 1:n])
 end
 
-function _week_problem(u0, pvec, tf)
-    return SciMLBase.ODEProblem{true}(rietkerk_rhs!, u0, (0.0, tf), pvec)
+function _week_problem(cfg, u0, pvec, tf)
+    f = cfg.sparse_jacobian ?
+        SciMLBase.ODEFunction{true}(rietkerk_rhs!; jac_prototype = InverseTuring.rhs_sparsity(size(u0, 1), size(u0, 2))) :
+        SciMLBase.ODEFunction{true}(rietkerk_rhs!)
+    return SciMLBase.ODEProblem{true}(f, u0, (0.0, tf), pvec)
 end
 
 function _advance!(integ, u, R, tf)
@@ -106,7 +109,7 @@ function trajectory_loss_and_gradient!(g::Vector{Float64}, c::AdjointTrajectoryC
     copyto!(c.biomass[1], tr.initial_biomass)
     pvec = ode_parameters(p, 0.0)
     nweeks1 = length(first(tr.forcings))
-    integ = SciMLBase.init(_week_problem(copy(u), copy(pvec), ode_week_length(cfg, nweeks1)),
+    integ = SciMLBase.init(_week_problem(cfg, copy(u), copy(pvec), ode_week_length(cfg, nweeks1)),
                            cfg.alg; save_everystep = false, save_start = false, save_end = false,
                            cfg.solver_kwargs...)
     i = 0
@@ -142,7 +145,7 @@ function trajectory_loss_and_gradient!(g::Vector{Float64}, c::AdjointTrajectoryC
         tf = ode_week_length(cfg, nweeks)
         for w in nweeks:-1:1
             pvec[end] = ode_rate(weekly[w], cfg, nweeks)
-            sol = SciMLBase.solve(_week_problem(c.checkpoints[i], copy(pvec), tf), cfg.alg;
+            sol = SciMLBase.solve(_week_problem(cfg, c.checkpoints[i], copy(pvec), tf), cfg.alg;
                                   save_everystep = true, dense = true, cfg.solver_kwargs...)
             SciMLBase.successful_retcode(sol) ||
                 throw(ErrorException("ODE solve failed with retcode $(sol.retcode)"))

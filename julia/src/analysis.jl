@@ -209,8 +209,11 @@ quantity — mean absolute percentage error and bias against it.
 function agreement_table(values::AbstractDict{<:AbstractString,<:AbstractVector};
                          ground_truth::Union{Nothing,RietkerkParams} = nothing)
     gt = ground_truth === nothing ? Dict{String,Float64}() : paramdict(ground_truth)
+    # Python's row order: the parameters, then the Turing and composite values, then the rest.
+    derived = ["turing_value", "composite_value"]
     order = [n for n in PARAM_NAMES if haskey(values, n)]
-    append!(order, sort([n for n in keys(values) if !(n in PARAM_NAMES)]))
+    append!(order, [n for n in derived if haskey(values, n)])
+    append!(order, sort([n for n in keys(values) if !(n in PARAM_NAMES) && !(n in derived)]))
     rows = NamedTuple[]
     for name in order
         v = Float64.(values[name])

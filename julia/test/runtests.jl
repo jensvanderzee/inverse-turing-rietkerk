@@ -5,6 +5,9 @@ import Statistics
 import ForwardDiff
 import Enzyme
 import JSON
+import SparseArrays
+using OrdinaryDiffEqTsit5, OrdinaryDiffEqStabilizedRK
+using SciMLSensitivity
 
 const REPO = normpath(joinpath(@__DIR__, "..", ".."))
 const DATA_DIR = joinpath(REPO, "data")
@@ -606,6 +609,56 @@ const P_PERT = RietkerkParams(paramvector(SYNTHETIC_TRUTH) .* FACTORS)
                                    years = 2, rng = Xoshiro(42), threaded = false)
         @test ex1.annual_totals ≈ [16.5 * 400 / 19]
         @test_throws ArgumentError synthetic_experiment(; preset = :nope)
+    end
+
+    # =======================================================================
+    @testset "continuous model (DifferentialEquations.jl + SciMLSensitivity)" begin
+        prob = small_problem(; ntrans = 2)
+        ode = with_discretisation(prob, ODEConfig(Tsit5(); abstol = 1e-10, reltol = 1e-10))
+        @test ode.cfg isa ODEConfig
+        L = loss(P_PERT, ode)
+        # The fixed-step scheme is a first-order discretisation of exactly this ODE.
+        e(spw) = abs(loss(P_PERT, with_discretisation(prob, SimConfig(steps_per_week = spw))) - L)
+        @test e(64) < e(16) < e(4)
+        @test e(64) < 2e-3 * L
+        @test loss(P_PERT, with_discretisation(prob, ODEConfig(ROCK4(); abstol = 1e-8, reltol = 1e-8))) ≈ L rtol = 1e-6
+
+        # Gradients: continuous adjoint (Enzyme VJPs) = ForwardDiff through the solver = FD.
+        La, ga = loss_and_gradient(ode, P_PERT; backend = AdjointODEBackend())
+        Lf, gf = loss_and_gradient(ode, P_PERT; backend = ForwardDiffBackend())
+        @test La ≈ L rtol = 1e-12
+        @test ga ≈ gf rtol = 1e-7
+        _, gd = loss_and_gradient(ode, P_PERT; backend = FiniteDiffBackend(relstep = 1e-6))
+        @test ga ≈ gd rtol = 1e-4
+        ra = SciMLSensitivity.EnzymeVJP(mode = Enzyme.set_runtime_activity(Enzyme.Reverse))
+        _, gg = loss_and_gradient(ode, P_PERT; backend = AdjointODEBackend(sensealg = GaussAdjoint(autojacvec = ra)))
+        @test gg ≈ gf rtol = 1e-7
+
+        # Training runs on the continuous model too, viability screen included.
+        res = train(ode; cfg = TrainConfig(SYNTHETIC_TRAIN_CONFIG; epochs = 3, verbose = false),
+                    reference = SYNTHETIC_TRUTH, seed = 3, backend = AdjointODEBackend())
+        @test res.converged && length(res.loss_history) == 3
+        @test keeps_vegetation(res.initial_params, viability_sites(ode.trajectories), ode.cfg)
+
+        # The wrong backend for the discretisation is an error, not a silent fallback.
+        @test_throws ArgumentError gradient_cache(ode, EnzymeBackend())
+        @test_throws ArgumentError gradient_cache(prob, AdjointODEBackend())
+
+        # The uniform equilibrium is a fixed point of the continuous model too.
+        o, w, b = homogeneous_steady_state(SYNTHETIC_TRUTH, 1.1)
+        u = InverseTuring.pack_state(fill(o, 5, 6), fill(w, 5, 6), fill(b, 5, 6))
+        solve_week!(u, SYNTHETIC_TRUTH, 1.1, ODEConfig(Tsit5(); abstol = 1e-12, reltol = 1e-12))
+        @test all(biomass_of(u) .≈ b) && all(view(u, :, :, 1) .≈ o)
+
+        # The Jacobian sparsity pattern contains the true Jacobian.
+        H, W = 5, 4
+        P = rhs_sparsity(H, W)
+        @test size(P) == (3H * W, 3H * W)
+        x = rand(Xoshiro(3), H, W, 3) .+ 0.5
+        pv = ode_parameters(P_PERT, 1.2)
+        J = ForwardDiff.jacobian(x -> (du = similar(x); rietkerk_rhs!(du, x, pv, 0.0); vec(du)), x)
+        @test all(iszero, J[iszero.(Matrix(P))])
+        @test count(!iszero, J) <= SparseArrays.nnz(P)
     end
 
     # =======================================================================
