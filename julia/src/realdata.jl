@@ -1,5 +1,5 @@
 """
-    ndvi_biomass(path; multiplier = 1500.0, T = Float64) -> Matrix{T}
+    ndvi_biomass(path; multiplier = 1500, T = Float64) -> Matrix{T}
 
 Read a two-band (Red, NIR) GeoTIFF and convert it to the biomass proxy used for
 fitting:
@@ -18,7 +18,7 @@ figure produced by the Python code.
 `T = Float32` reproduces the original PyTorch arithmetic bit-for-bit; the default
 `Float64` is a better base for gradient-based fitting.
 """
-function ndvi_biomass(path::AbstractString; multiplier::Real = 1500.0, T::Type = Float64)
+function ndvi_biomass(path::AbstractString; multiplier::Real = NDVI_TO_BIOMASS_MULTIPLIER, T::Type = Float64)
     isfile(path) || throw(ArgumentError("no such raster: $path"))
     mult = T(multiplier)
     return ArchGDAL.read(path) do ds
@@ -123,7 +123,7 @@ function read_weekly_precip(path::AbstractString)
 end
 
 """
-    load_site(data_dir, site; multiplier = 1500.0, T = Float64,
+    load_site(data_dir, site; multiplier = 1500, T = Float64,
               use_weekly_precip = true) -> SiteSeries{T}
 
 Load one subsite. `site` may be the bare letter (`"b"`) or the full directory
@@ -134,7 +134,7 @@ with a warning, as in the Python loader. When `use_weekly_precip` is true but a
 year has no weekly record, the annual total is spread flat across 52 weeks.
 """
 function load_site(data_dir::AbstractString, site::AbstractString;
-                   multiplier::Real = 1500.0, T::Type = Float64,
+                   multiplier::Real = NDVI_TO_BIOMASS_MULTIPLIER, T::Type = Float64,
                    use_weekly_precip::Bool = true)
     name = startswith(site, "subsite_") ? String(site) : "subsite_$site"
     dir = joinpath(data_dir, name)

@@ -1,122 +1,118 @@
 """
     InverseTuringDiffEqExt
 
-Adaptive ODE backend for InverseTuring, activated by
-`using OrdinaryDiffEqStabilizedRK`.
+The continuous-model backend: [`ODEConfig`](@ref) problems integrated with any
+OrdinaryDiffEq algorithm. Activated by loading a solver package
+(`using OrdinaryDiffEqStabilizedRK`, `using OrdinaryDiffEqTsit5`, ...).
 
-That sub-package rather than the `OrdinaryDiffEq` meta-package: it carries the
-`ROCK2`/`ROCK4` stabilised explicit methods this problem wants, plus `ODEProblem`
-and `solve`, and loads in a fraction of the time. Other algorithm families work
-too — add `using OrdinaryDiffEqTsit5` or `OrdinaryDiffEqSDIRK` and pass the `alg`
-keyword.
-
-This solves the *continuous* Rietkerk system by method of lines, in contrast to the
-fixed-step Gauss–Seidel sweep the package uses by default. The two are different
-discretisations of the same PDE, and the fitted parameters are not interchangeable
-between them — see `scripts/diffeq_comparison.jl`.
-
-The motivation is stiffness. The default explicit scheme is bounded by
-`diffusion_stability_limit(cfg) = 52·steps_per_week/4`, and the coefficients fitted
-to the real data (18–34) sit right against it. A stabilised explicit method such as
-`ROCK2` has an extended real-axis stability region and removes that ceiling without
-forming a Jacobian, which matters at ~55 000 unknowns.
+Each forcing week is one ODE segment with constant rain. One integrator is built
+per rollout and `reinit!`-ed for every week, so the solver caches (several copies
+of a 55 000-unknown state for a 131×140 site) are allocated once, not 468 times.
 """
 module InverseTuringDiffEqExt
 
 using InverseTuring
-using InverseTuring: WeeklyForcing, week_boundaries, rietkerk_rhs!, pack_state,
-                     unpack_state, biomass_of, RietkerkParams, SimConfig,
-                     SiteTrajectory, InverseProblem, mean_squared_delta_error,
-                     mean_squared_error, NPARAMS
-using OrdinaryDiffEqStabilizedRK
+using InverseTuring: RietkerkParams, ODEConfig, SiteTrajectory, NPARAMS, rietkerk_rhs!,
+                     pack_state, biomass_of, mean_squared_delta_error, mean_squared_error,
+                     ode_parameters, ode_week_length, ode_rate
+import InverseTuring: solve_week!, simulate_years_ode, ode_trajectory_loss, ode_final_biomass
+import SciMLBase
+import OrdinaryDiffEqCore
 import Statistics
 
 """
-    solve_year(p, u0, weekly_precip, cfg; alg = ROCK2(), save_everystep = false, kwargs...)
+    week_integrator(u, p, cfg; nweeks = 52)
 
-Integrate one year and return the `ODESolution`.
-
-Week boundaries are passed as `tstops` because the forcing is piecewise constant;
-without them an adaptive controller steps across the jumps and either drops order
-or burns steps on rejections.
-
-`save_everystep = false` keeps only the endpoints, which is all the loss needs and
-avoids retaining a full trajectory of 55 000-element states.
+Integrator over one week for the packed state `u` (whose element type may be a
+`ForwardDiff.Dual`), keeping only the final state.
 """
-function InverseTuring.solve_year(p::RietkerkParams, u0::AbstractArray{<:Any,3},
-                                  weekly_precip::AbstractVector, cfg::SimConfig;
-                                  alg = ROCK2(), save_everystep::Bool = false,
-                                  abstol = 1e-8, reltol = 1e-8, kwargs...)
-    forcing = WeeklyForcing(weekly_precip, cfg.year_time_units)
-    rhs! = let forcing = forcing
-        (du, u, par, t) -> rietkerk_rhs!(du, u, par, forcing, t)
-    end
-    prob = ODEProblem{true}(rhs!, u0, (0.0, cfg.year_time_units), p)
-    return solve(prob, alg; tstops = week_boundaries(forcing),
-                 save_everystep = save_everystep, abstol = abstol, reltol = reltol,
-                 kwargs...)
+function week_integrator(u::AbstractArray{T,3}, p::RietkerkParams, cfg::ODEConfig;
+                         nweeks::Integer = 52) where {T}
+    pvec = convert(Vector{promote_type(T, eltype(p))}, ode_parameters(p, zero(T)))
+    prob = SciMLBase.ODEProblem{true}(ode_function(cfg, size(u)), copy(u),
+                                      (0.0, ode_week_length(cfg, nweeks)), pvec)
+    return SciMLBase.init(prob, cfg.alg; save_everystep = false, save_start = false,
+                          save_end = false, cfg.solver_kwargs...)
+end
+
+"""The right-hand side, with the Jacobian's sparsity pattern when `cfg` asks for it."""
+ode_function(cfg::ODEConfig, dims) =
+    cfg.sparse_jacobian ?
+    SciMLBase.ODEFunction{true}(rietkerk_rhs!; jac_prototype = InverseTuring.rhs_sparsity(dims[1], dims[2])) :
+    SciMLBase.ODEFunction{true}(rietkerk_rhs!)
+
+function _advance!(integ, u::AbstractArray, R, tf::Float64)
+    integ.p[end] = R
+    SciMLBase.reinit!(integ, u; t0 = 0.0, tf = tf, erase_sol = true)
+    SciMLBase.solve!(integ)
+    SciMLBase.successful_retcode(integ.sol) ||
+        throw(ErrorException("ODE solve failed with retcode $(integ.sol.retcode)"))
+    copyto!(u, integ.u)
+    return u
 end
 
 """
-    simulate_years_ode(p, biomass0, weekly_precip, cfg, nyears; kwargs...)
-        -> (final_u, mean_biomass_per_year, total_steps)
+    solve_week!(u, p, R, cfg::ODEConfig[, integrator]) -> u
 
-Roll forward `nyears` years under a fixed annual forcing, restarting the solve each
-year so the forcing stays a function on `[0, year_time_units]`.
-
-Returns the final packed state, the mean biomass after each year (with the initial
-value first, so the vector has `nyears + 1` entries), and the total number of
-accepted solver steps — the honest measure of work done, since it is not fixed in
-advance the way `steps_per_week` is.
+Advance the packed state `u` by one forcing week at rain rate `R` (mm/day as the
+ODE sees it, see `ode_rate`).
 """
-function InverseTuring.simulate_years_ode(p::RietkerkParams, biomass0::AbstractMatrix,
-                                          weekly_precip::AbstractVector, cfg::SimConfig,
-                                          nyears::Integer; kwargs...)
+function solve_week!(u::AbstractArray{<:Any,3}, p::RietkerkParams, R, cfg::ODEConfig,
+                     integ = week_integrator(u, p, cfg); nweeks::Integer = 52)
+    return _advance!(integ, u, R, ode_week_length(cfg, nweeks))
+end
+
+"""Advance `u` by one year of weekly forcing with the integrator `integ`."""
+function ode_year!(u, integ, weekly::AbstractVector, cfg::ODEConfig)
+    nweeks = length(weekly)
+    tf = ode_week_length(cfg, nweeks)
+    for w in 1:nweeks
+        _advance!(integ, u, ode_rate(weekly[w], cfg, nweeks), tf)
+    end
+    return u
+end
+
+function simulate_years_ode(p::RietkerkParams, biomass0::AbstractMatrix,
+                            weekly_precip::AbstractVector, cfg::ODEConfig, nyears::Integer;
+                            callback = nothing)
     u = pack_state(biomass0)
+    integ = week_integrator(u, p, cfg; nweeks = length(weekly_precip))
     means = Float64[Statistics.mean(biomass_of(u))]
-    steps = 0
-    for _ in 1:nyears
-        sol = InverseTuring.solve_year(p, u, weekly_precip, cfg; kwargs...)
-        u = sol.u[end]
-        steps += length(sol.t) - 1
+    for year in 1:nyears
+        ode_year!(u, integ, weekly_precip, cfg)
         push!(means, Statistics.mean(biomass_of(u)))
+        callback === nothing || callback(year, u)
     end
-    return (u, means, steps)
+    return (u, means)
 end
 
-"""
-    ode_loss(θ, prob; kwargs...)
-
-The delta-MSE objective evaluated with the adaptive backend.
-
-Differentiable through `ForwardDiff`: the solver is pure Julia and propagates dual
-numbers, so no adjoint machinery is needed for nine parameters. Note that adaptive
-step selection then depends on the dual-valued error estimate, which makes the
-objective very slightly non-smooth in `θ` — tighten `abstol`/`reltol` if a gradient
-check disagrees with finite differences.
-"""
-function InverseTuring.ode_loss(θ::AbstractVector, prob::InverseProblem; kwargs...)
-    p = RietkerkParams(θ)
-    T = eltype(θ)
-    total = zero(T)
-    n = 0
-    for tr in prob.trajectories
-        u = pack_state(tr.initial_biomass; T = T)
-        prev_pred = copy(biomass_of(u))
-        prev_target = tr.initial_target
-        for k in eachindex(tr.targets)
-            sol = InverseTuring.solve_year(p, u, tr.forcings[k], prob.cfg; kwargs...)
-            u = sol.u[end]
-            target = tr.targets[k]
-            total += prob.delta_loss ?
-                     mean_squared_delta_error(biomass_of(u), prev_pred, target, prev_target) :
-                     mean_squared_error(biomass_of(u), target)
-            prev_pred = copy(biomass_of(u))
-            prev_target = target
-            n += 1
-        end
+function ode_final_biomass(p::RietkerkParams, biomass0::AbstractMatrix,
+                           weekly_per_year::AbstractVector, cfg::ODEConfig)
+    u = pack_state(biomass0)
+    integ = week_integrator(u, p, cfg; nweeks = length(first(weekly_per_year)))
+    for weekly in weekly_per_year
+        ode_year!(u, integ, weekly, cfg)
     end
-    return prob.average && n > 0 ? total / n : total
+    return copy(biomass_of(u))
+end
+
+function ode_trajectory_loss(tr::SiteTrajectory, p::RietkerkParams, cfg::ODEConfig,
+                             ::Type{T}, delta::Bool) where {T}
+    u = pack_state(tr.initial_biomass; T = T)
+    integ = week_integrator(u, p, cfg; nweeks = length(first(tr.forcings)))
+    prev_pred = copy(biomass_of(u))
+    prev_target = tr.initial_target
+    acc = zero(T)
+    for k in eachindex(tr.targets)
+        ode_year!(u, integ, tr.forcings[k], cfg)
+        target = tr.targets[k]
+        B = biomass_of(u)
+        acc += delta ? mean_squared_delta_error(B, prev_pred, target, prev_target) :
+                       mean_squared_error(B, target)
+        copyto!(prev_pred, B)
+        prev_target = target
+    end
+    return acc
 end
 
 end # module

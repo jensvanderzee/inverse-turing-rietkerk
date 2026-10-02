@@ -11,22 +11,22 @@ Usage
 -----
     julia --project=julia -t auto julia/scripts/bifurcation.jl
 
-Options
-    --params <csv>        parameter table
-    --metrics <csv>       held-out metrics used to pick the best model
-    --history <dir>       parameter histories for the tier-1 filter (.pkl or .json)
+Options (defaults read the outputs of the other Julia scripts; point them at
+`results/real_data_rietkerk/...` to use the Python fits)
+    --params <csv>        parameter table (parameter_analysis.jl)
+    --metrics <csv>       held-out metrics used to pick the best model (test_realdata.jl)
+    --history <dir>       parameter histories for the tier-1 filter (.json or .pkl)
     --precip-min 255      rainfall sweep, mm
     --precip-max 355
     --precip-step 3
     --years 1000          simulated years per rainfall level
     --steps-per-week 4
     --init-site a         subsite whose first year provides the initial field
-    --out <dir>
+    --out <dir>           default julia/results/real_data_rietkerk/bifurcation
 
-Cost: `n_models x n_levels` independent rollouts of `years x 52 x steps_per_week`
-Euler steps. The published settings are ~35 models x 34 levels x 208k steps; with
-`-t auto` on 32 cores expect a few hours. Use `--years 200` for a quick look —
-the branch positions move slightly but the qualitative shape is already there.
+Cost: `n_models × n_levels` independent rollouts of `years × 52 × steps_per_week`
+steps (34 levels × 1000 years × 208 steps for each model). Levels run in parallel;
+use `--years 200` for a quick look.
 """
 
 using InverseTuring
@@ -36,45 +36,41 @@ import CSV, DataFrames, Statistics
 
 include(joinpath(@__DIR__, "common.jl"))
 
-const PARAM_CSV = string(argval("params", joinpath(PY_RESULTS, "parameter_history_analysis",
+const RD = joinpath(OUT_ROOT, "real_data_rietkerk")
+const PARAM_CSV = string(argval("params", joinpath(RD, "parameter_history_analysis",
                                                    "four_site_final_parameter_values.csv")))
-const METRICS_CSV = string(argval("metrics", joinpath(PY_RESULTS, "real_data", "test_results",
-                                                      "test_metrics.csv")))
-const HISTORY_DIR = string(argval("history", joinpath(PY_RESULTS, "real_data", "models", "parameters")))
+const METRICS_CSV = string(argval("metrics", joinpath(RD, "test_results", "test_metrics.csv")))
+const HISTORY_DIR = string(argval("history", joinpath(RD, "models", "parameters")))
 const PRECIP_MIN = argfloat("precip-min", 255.0)
 const PRECIP_MAX = argfloat("precip-max", 355.0)
 const PRECIP_STEP = argfloat("precip-step", 3.0)
 const YEARS = argint("years", 1000)
 const STEPS_PER_WEEK = argint("steps-per-week", 4)
 const INIT_SITE = string(argval("init-site", "a"))
-const MULTIPLIER = argfloat("multiplier", 1500.0)
-const OUTDIR = string(argval("out", joinpath(OUT_ROOT, "bifurcation")))
+const MULTIPLIER = argfloat("multiplier", NDVI_TO_BIOMASS_MULTIPLIER)
+const OUTDIR = string(argval("out", joinpath(RD, "bifurcation")))
 const INSET_AT = [265.0, 280.0, 295.0, 310.0, 325.0, 340.0]
 
 banner("Bifurcation sweep")
 report_threads()
-
 param_df = read_parameter_table(PARAM_CSV)
 model_ids = collect(param_df.model_id)
-println("models in table  : ", length(model_ids))
+println("models in table  : ", length(model_ids), " (", PARAM_CSV, ")")
 
 # ---------------------------------------------------------------------------
-# Tier-1 filter: drop runs that failed structurally rather than fitting badly.
-if isdir(HISTORY_DIR)
-    histories = load_parameter_histories(HISTORY_DIR)
-    if !isempty(histories)
-        kept, dropped = tier1_filter(filter(p -> p.first in model_ids, histories))
-        println("\nTier-1 filter (history length + degenerate parameters):")
-        for (id, reason) in dropped
-            println("  dropped model $id: $reason")
-        end
-        @printf("  kept %d of %d\n", length(kept), length(histories))
-        param_df = param_df[in.(param_df.model_id, Ref(Set(kept))), :]
-        model_ids = collect(param_df.model_id)
-    end
-else
-    @warn "no parameter-history directory; skipping the tier-1 filter" HISTORY_DIR
+# Tier-1 filter: drop runs that stopped early or ended on a clamp bound.
+histories = isdir(HISTORY_DIR) ? load_parameter_histories(HISTORY_DIR) : Dict{Int,Vector{Dict{String,Float64}}}()
+missing_ids = [id for id in model_ids if !haskey(histories, id)]
+kept, dropped = tier1_filter(Dict(id => histories[id] for id in model_ids if haskey(histories, id)),
+                             realdata_reference(MULTIPLIER))
+append!(dropped, [(id, "missing history file") for id in missing_ids])
+println("\nTier-1 filter (history length + degenerate parameters):")
+for (id, reason) in sort(dropped)
+    println("  dropped model $id: $reason")
 end
+@printf("  kept %d of %d\n", length(kept), length(model_ids))
+param_df = param_df[in.(param_df.model_id, Ref(Set(kept))), :]
+model_ids = collect(param_df.model_id)
 isempty(model_ids) && error("no models left after filtering")
 
 # ---------------------------------------------------------------------------
@@ -98,10 +94,10 @@ initial = init_series.observations[1].biomass
         init_series.observations[1].year, size(initial)..., Statistics.mean(initial))
 
 precip_values = collect(PRECIP_MIN:PRECIP_STEP:PRECIP_MAX)
-cfg = SimConfig(steps_per_week = STEPS_PER_WEEK, year_time_units = 1.0)
+cfg = SimConfig(steps_per_week = STEPS_PER_WEEK)
 @printf("Sweep: %d levels (%.0f-%.0f mm) x %d models x %d years\n",
         length(precip_values), PRECIP_MIN, PRECIP_MAX, length(model_ids), YEARS)
-@printf("       %d Euler steps per rollout, %d rollouts total\n",
+@printf("       %d steps per rollout, %d rollouts total\n",
         YEARS * 52 * STEPS_PER_WEEK, length(precip_values) * length(model_ids))
 
 # ---------------------------------------------------------------------------
@@ -134,7 +130,7 @@ best_idx = findfirst(==(best_id), model_ids)
 
 plt = plot(size = (1100, 620), dpi = 200,
            xlabel = "Average annual precipitation [mm]",
-           ylabel = "Average vegetation density [g/m²]",
+           ylabel = "Average vegetation density [NDVI × $(Int(MULTIPLIER))]",
            xlims = (PRECIP_MIN, PRECIP_MAX), legend = :topleft)
 for i in eachindex(model_ids)
     i == best_idx && continue
