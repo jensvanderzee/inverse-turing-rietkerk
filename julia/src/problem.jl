@@ -82,10 +82,12 @@ struct InverseProblem{T,F,C<:AbstractDiscretisation}
     delta_loss::Bool
 end
 
-InverseProblem(trajectories::Vector{<:SiteTrajectory}, cfg::AbstractDiscretisation;
+InverseProblem(trajectories::AbstractVector{<:SiteTrajectory}, cfg::AbstractDiscretisation;
                average::Bool = true, threaded::Bool = Threads.nthreads() > 1,
                delta_loss::Bool = true) =
-    InverseProblem(trajectories, cfg, average, threaded, delta_loss)
+    # The comprehension narrows the element type, e.g. of a vector built by
+    # `push!`-ing into `SiteTrajectory[]`.
+    InverseProblem([tr for tr in trajectories], cfg, average, threaded, delta_loss)
 
 """
     InverseProblem(sites::AbstractVector{<:SiteSeries}, cfg; kwargs...)

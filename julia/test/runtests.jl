@@ -381,6 +381,9 @@ const P_PERT = RietkerkParams(paramvector(SYNTHETIC_TRUTH) .* FACTORS)
         Ls, gs = loss_and_gradient(serial, P_PERT)
         Lp, gp = loss_and_gradient(par, P_PERT)
         @test Ls === Lp && gs == gp
+        # A vector with an abstract element type (built with push!) works as well.
+        @test loss(P_PERT, InverseProblem(SiteTrajectory[trs...], cfg; threaded = false)) ===
+              loss(P_PERT, serial)
     end
 
     # =======================================================================
