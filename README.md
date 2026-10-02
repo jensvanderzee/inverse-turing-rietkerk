@@ -64,7 +64,11 @@ scripts needs to know:
   in the real-data tables (it no longer sets the random starts or the bounds).
 - **Optimisation.** The coefficients span five decades, so they are optimised in
   log space (`log_<name>` parameters; read values with `parameter_values()`).
-  Learning rates are therefore relative steps: 0.01 (was 0.1–0.2 in raw space).
+  Learning rates are therefore relative steps: 0.01 (was 0.1–0.2 in raw space),
+  decaying by 0.9999 per epoch on the synthetic data and 0.9995 on the real data.
+  The summed steps bound how far a parameter can travel from its start: ~8.5
+  decades over the 7500 real-data epochs, which the real-data reference values
+  below the start range need (D_P ≈ 4e-6 is 3.4 decades under 0.01).
   Log space keeps every parameter positive, so there are no clamps beyond
   `NUMERICAL_BOUNDS` (1e-30 to 1e30, which only keep values finite and nonzero in
   float32; W₀ is not capped at 1 either). Degenerate-run filters

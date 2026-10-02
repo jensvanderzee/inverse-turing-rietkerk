@@ -513,7 +513,10 @@ def train_model_real_data(training_data: Dict,
         betas=(0.9, 0.95),
         eps=1e-8,
     )
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.999)
+    # 0.9995/epoch: the summed relative steps allow ~8.5 decades of movement over
+    # 7500 epochs (0.999 allowed ~4.3), enough to get from the INIT_RANGE floor of
+    # 0.01 down to Rietkerk-like values such as D_P ~ 4e-6 on 30 m pixels.
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9995)
     loss_history = []
     start_epoch = 0
     if checkpoint is not None:
