@@ -37,8 +37,11 @@ load.
 
 ```bash
 julia --project=julia -e 'using Pkg; Pkg.instantiate()'
-julia --project=julia -e 'using Pkg; Pkg.test()'
+julia --project=julia -t 2 julia/test/runtests.jl
 ```
+
+(`Pkg.test()` works too, but first recompiles the dependencies under its own
+compiler flags — bounds checking on — which takes a while.)
 
 ```julia
 using InverseTuring
