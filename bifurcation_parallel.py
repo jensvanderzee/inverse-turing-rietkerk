@@ -55,7 +55,7 @@ STEPS_PER_WEEK = 4
 
 # Tier-1 filter thresholds (same as compare_invPDE_realdata_params.py)
 LENGTH_FRAC = 0.9   # drop runs with fewer than 90 % of the max snapshot count
-# Runs with any final param NaN/inf or on its clamp bound are dropped too
+# Runs with any final param NaN/inf or > 4 decades from the reference are dropped too
 # (rietkerk_model.degenerate_parameters; a fixed floor such as 1e-4 would reject
 # ordinary values, e.g. D_W ~ 1e-4 pixel²/day on 30 m pixels).
 

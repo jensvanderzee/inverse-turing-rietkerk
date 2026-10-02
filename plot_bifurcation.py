@@ -33,7 +33,7 @@ NDVI_TO_BIOMASS_MULTIPLIER = 1500.0
 
 # Tier-1 filter thresholds (must match training script)
 LENGTH_FRAC = 0.9
-# Runs with any final param NaN/inf or on its clamp bound are dropped too
+# Runs with any final param NaN/inf or > 4 decades from the reference are dropped too
 # (rietkerk_model.degenerate_parameters; a fixed floor such as 1e-4 would reject
 # ordinary values, e.g. D_W ~ 1e-4 pixel²/day on 30 m pixels).
 

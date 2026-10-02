@@ -113,7 +113,8 @@ def train_model_adam(training_data: List[List[torch.Tensor]],
     if seed is not None:
         set_seed(seed)
 
-    # Random start: each parameter log-uniform within one decade of the reference,
+    # Random start: each parameter log-uniform in rietkerk_model.INIT_RANGE (the same
+    # range for every parameter, independent of SYNTHETIC_TRUTH),
     # redrawn until mean biomass stays within 0.1-10x of its initial level over the
     # training rollout (see rietkerk_model.draw_viable_model). Parameters are optimised in log space (see
     # invRietkerk), so learning_rate is a relative step size.

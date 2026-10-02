@@ -60,20 +60,28 @@ scripts needs to know:
   season they die out in the first year (his R is a climatic mean). The slowdown
   leaves the uniform equilibria, the Turing range (T₁ = 1.001, T₂ = 1.259 mm/day,
   reproduced by `turing_value`) and the wavelength unchanged. `REALDATA_REFERENCE`
-  is the same set on 30 m pixels in NDVI × 1500 units; it centres the random starts
-  and is the comparison point in the real-data tables.
+  is the same set on 30 m pixels in NDVI × 1500 units; it is the comparison point
+  in the real-data tables (it no longer sets the random starts or the bounds).
 - **Optimisation.** The coefficients span five decades, so they are optimised in
   log space (`log_<name>` parameters; read values with `parameter_values()`).
-  Learning rates are therefore relative steps: 0.01 (was 0.1–0.2 in raw space).
-  Clamps are four decades either side of the reference (W₀ ≤ 1) instead of
-  `[1e-4, 1e4]`, and degenerate-run filters test for a parameter on its bound
-  (`degenerate_parameters`) instead of `< 1e-4` / `< 0.0011`, which would reject
+  Learning rates are therefore relative steps: 0.01 (was 0.1–0.2 in raw space),
+  decaying by 0.9999 per epoch on the synthetic data and 0.9995 on the real data.
+  The summed steps bound how far a parameter can travel from its start: ~8.5
+  decades over the 7500 real-data epochs, which the real-data reference values
+  below the start range need (D_P ≈ 4e-6 is 3.4 decades under 0.01).
+  Log space keeps every parameter positive, so there are no clamps beyond
+  `NUMERICAL_BOUNDS` (1e-30 to 1e30, which only keep values finite and nonzero in
+  float32; W₀ is not capped at 1 either). Degenerate-run filters
+  (`degenerate_parameters`) flag a parameter that is non-finite or more than four
+  decades from the reference, instead of `< 1e-4` / `< 0.0011`, which would reject
   ordinary values such as D_W ≈ 1e-4 pixel²/day.
-- **Initialisation.** Starts are drawn log-uniformly within one decade of the
-  reference and **redrawn until mean biomass stays within 0.1–10× of its initial
-  level at every site over the training rollout** (`draw_viable_model`). B = 0 is
-  absorbing: from a start where the plants die, the later years give no gradient
-  and the fit only tunes the die-off (14 of 20 draws on the synthetic data).
+- **Initialisation.** Every parameter is drawn log-uniformly from the same range,
+  `INIT_RANGE` = 0.01–100, independent of the reference values, and the draw is
+  **redrawn until mean biomass stays within 0.1–10× of its initial level at every
+  site over the training rollout** (`draw_viable_model`, up to 1000 draws). B = 0
+  is absorbing: from a start where the plants die, the later years give no
+  gradient and the fit only tunes the die-off. About 6% of draws from this prior
+  pass on the real data, so a run typically needs ~15 rollouts to find its start.
   Starts where biomass explodes are dropped too; on the real data they begin four
   orders of magnitude above the no-change loss. Each run records `init_draws`.
 - **Turing and composite diagnostics.** Rietkerk's uniform state depends on

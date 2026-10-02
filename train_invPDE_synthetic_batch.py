@@ -142,7 +142,8 @@ def train_model_adam(training_data: List[List[torch.Tensor]],
     targets = [torch.cat([training_data[s][y] for s in range(n_sites)]) for y in range(n_years)]
     initial_biomass = equilibrium_state.expand(n_sites, -1, -1, -1)
 
-    # Random start: each parameter log-uniform within one decade of the reference,
+    # Random start: each parameter log-uniform in rietkerk_model.INIT_RANGE (the same
+    # range for every parameter, independent of SYNTHETIC_TRUTH),
     # redrawn until mean biomass stays within 0.1-10x of its initial level over the
     # training rollout (see rietkerk_model.draw_viable_model). Parameters are optimised in log space (see
     # invRietkerk), so learning_rate is a relative step size.

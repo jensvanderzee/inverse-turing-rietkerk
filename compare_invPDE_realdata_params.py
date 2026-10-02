@@ -31,7 +31,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 # Tier 1 filter thresholds (applied to raw, un-scaled values).
 LENGTH_FRAC = 0.9      # drop runs with fewer than 90% of the max snapshot count
-# Runs with any final param NaN/inf or on its clamp bound are dropped too
+# Runs with any final param NaN/inf or > 4 decades from the reference are dropped too
 # (rietkerk_model.degenerate_parameters).
 
 # Unit conversion for display and reporting: Rietkerk's physical units (m²/day
