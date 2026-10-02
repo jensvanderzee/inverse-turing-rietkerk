@@ -466,11 +466,11 @@ def train_model_real_data(training_data: Dict,
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-    # Initialize model with random parameters: each one log-uniform within one decade
-    # of the Rietkerk reference, expressed in this data's biomass units, redrawn until
+    # Initialize model with random parameters: each one log-uniform in
+    # rietkerk_model.INIT_RANGE (the same range for every parameter), redrawn until
     # mean biomass stays within 0.1-10x of its initial level at every site over the
     # rollout the loss uses (see rietkerk_model.draw_viable_model). Parameters are optimised in log space, so
-    # learning_rate is a relative step size.
+    # learning_rate is a relative step size. `reference` is only stored with the model.
     reference = realdata_reference(training_data.get('ndvi_to_biomass_multiplier',
                                                      NDVI_TO_BIOMASS_MULTIPLIER))
     sites = [(ts[0]['biomass'], [tp['weekly_precipitation'] for tp in ts[:-1]])
@@ -585,7 +585,7 @@ def train_model_real_data(training_data: Dict,
         optimizer.step()
         scheduler.step()
 
-        # Keep parameters inside their bounds (four decades either side of the reference)
+        # Keep parameters finite and nonzero (rietkerk_model.NUMERICAL_BOUNDS)
         model.clamp_parameters_()
 
         loss_value = loss.item()

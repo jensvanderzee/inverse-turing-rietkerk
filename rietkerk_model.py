@@ -219,35 +219,33 @@ def to_physical_units(params: Dict[str, float],
     return out
 
 
-def parameter_bounds(reference: Dict[str, float],
-                     decades: float = 4.0) -> Dict[str, Tuple[float, float]]:
-    """Clamp range for each parameter: `decades` orders of magnitude either side of
-    the reference, and W0 ≤ 1 because it is a fraction. This replaces the old fixed
-    [1e-4, 1e4], which is meaningless when coefficients span five decades (D_W is
-    ~1e-4 pixel²/day on 30 m pixels). A parameter sitting on its lower bound at the
-    end of a run is a collapsed fit, not a small value."""
-    bounds = {}
-    for name in PARAM_NAMES:
-        lo = reference[name] * 10.0 ** (-decades)
-        hi = reference[name] * 10.0 ** decades
-        if name == "bare_soil_infiltration":
-            hi = 1.0
-        bounds[name] = (lo, hi)
-    return bounds
+# Random starts: every parameter log-uniform in this range, the same for all of them
+# and independent of any reference values.
+INIT_RANGE = (0.01, 100.0)
+
+# Parameters are stored as logarithms, so they are positive by construction; these
+# limits only keep exp(log value) a finite, nonzero float32. They are not a prior.
+NUMERICAL_BOUNDS = (1e-30, 1e30)
+
+
+def parameter_bounds() -> Dict[str, Tuple[float, float]]:
+    """Clamp range for each parameter: NUMERICAL_BOUNDS for all of them."""
+    return {name: NUMERICAL_BOUNDS for name in PARAM_NAMES}
 
 
 def degenerate_parameters(values: Dict[str, float], reference: Dict[str, float],
-                          margin: float = 1.1, bound_decades: float = 4.0) -> List[str]:
-    """Names of parameters that are non-finite or have run onto a clamp bound
-    (within a factor `margin`). This is the Rietkerk counterpart of the old
-    `value < 0.0011` / `<= 1e-4` checks, which would flag perfectly ordinary values
-    here (D_W is ~1e-4 pixel²/day on 30 m pixels)."""
-    bounds = parameter_bounds(reference, bound_decades)
+                          margin: float = 1.1, decades: float = 4.0) -> List[str]:
+    """Names of parameters that are non-finite or have drifted more than `decades`
+    orders of magnitude (less a factor `margin`) from `reference`, as a collapsed
+    fit does. An analysis filter only: fits are not clamped to this range. It
+    replaces the old `value < 0.0011` / `<= 1e-4` checks, which would flag perfectly
+    ordinary values here (D_W is ~1e-4 pixel²/day on 30 m pixels)."""
     bad = []
     for name in PARAM_NAMES:
         v = values.get(name, float("nan"))
-        lo, hi = bounds[name]
-        if not np.isfinite(v) or v <= lo * margin or (v >= hi / margin and name != "bare_soil_infiltration"):
+        lo = reference[name] * 10.0 ** (-decades)
+        hi = reference[name] * 10.0 ** decades
+        if not np.isfinite(v) or v <= lo * margin or v >= hi / margin:
             bad.append(name)
     return bad
 
@@ -316,17 +314,18 @@ class invRietkerk(nn.Module):
     changes. Read and write natural values through `parameter_values()` and
     `set_parameters()`, or as attributes (`model.mortality_rate`).
 
-    trainable=False builds a fixed model at `params` (default: SYNTHETIC_TRUTH).
-    trainable=True draws each parameter log-uniformly within `init_decades` orders of
-    magnitude of `reference` (default: SYNTHETIC_TRUTH), using torch's global RNG so
-    that `set_seed` fixes the initialisation.
+    trainable=False builds a fixed model at `params` (default: `reference`, which
+    defaults to SYNTHETIC_TRUTH).
+    trainable=True without `params` draws every parameter log-uniformly from
+    `init_range` (default INIT_RANGE, the same for all parameters; `reference` plays
+    no part), using torch's global RNG so that `set_seed` fixes the initialisation.
+    Values are only kept within NUMERICAL_BOUNDS.
     """
 
     def __init__(self, trainable: bool = False,
                  params: Optional[Dict[str, float]] = None,
                  reference: Optional[Dict[str, float]] = None,
-                 init_decades: float = 1.0,
-                 bound_decades: float = 4.0,
+                 init_range: Tuple[float, float] = INIT_RANGE,
                  semi_implicit: bool = True,
                  gradient_checkpointing: bool = False):
         super().__init__()
@@ -337,11 +336,12 @@ class invRietkerk(nn.Module):
         self.gradient_checkpointing = gradient_checkpointing
         reference = dict(reference if reference is not None else SYNTHETIC_TRUTH)
         self.reference = reference
-        self.bounds = parameter_bounds(reference, bound_decades)
+        self.bounds = parameter_bounds()
 
         if params is None and trainable:
-            u = torch.rand(len(PARAM_NAMES)) * 2.0 - 1.0
-            params = {name: reference[name] * 10.0 ** (init_decades * u[i].item())
+            log_lo, log_hi = math.log10(init_range[0]), math.log10(init_range[1])
+            u = torch.rand(len(PARAM_NAMES))
+            params = {name: 10.0 ** (log_lo + (log_hi - log_lo) * u[i].item())
                       for i, name in enumerate(PARAM_NAMES)}
         elif params is None:
             params = reference
@@ -524,7 +524,7 @@ def keeps_vegetation(model: invRietkerk, sites, steps_per_week: int,
 
 
 def draw_viable_model(reference: Dict[str, float], sites, steps_per_week: int,
-                      device=None, model_class=None, max_draws: int = 100,
+                      device=None, model_class=None, max_draws: int = 1000,
                       min_fraction: float = 0.1, max_fraction: float = 10.0,
                       **kwargs) -> Tuple[invRietkerk, int]:
     """Random start (as `invRietkerk(trainable=True)`) that keeps vegetation alive,
@@ -534,7 +534,7 @@ def draw_viable_model(reference: Dict[str, float], sites, steps_per_week: int,
     Rietkerk's bare state B = 0 is absorbing, and bistable with the vegetated one.
     From a start where the plants die, every later year contributes almost nothing
     to the gradient (B decays exponentially), so the fit can only tune the die-off:
-    on the synthetic data 14 of 20 draws from the ±1-decade prior are like that,
+    on the synthetic data 14 of 20 draws from the old ±1-decade prior were like that,
     and the fits started from such draws that were tried did not recover.
     Redrawing until the start sustains vegetation —
     restricting the prior to parameter sets compatible with the one thing the data
@@ -572,8 +572,8 @@ def model_from_parameters(params: Dict[str, float], device=None,
                           trainable: bool = False, **kwargs) -> invRietkerk:
     """Build a model at fixed parameter values (e.g. one row of a parameter CSV).
 
-    `reference` only sets the clamp bounds; pass the one the values were fitted
-    under (REALDATA_REFERENCE for real data) so that no value is clipped.
+    `reference` is only stored with the model (no value is clipped: the clamp range
+    is NUMERICAL_BOUNDS for every parameter).
     """
     model = invRietkerk(trainable=trainable, params=params,
                         reference=reference if reference is not None else params, **kwargs)

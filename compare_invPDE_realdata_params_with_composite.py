@@ -26,7 +26,7 @@ NDVI_TO_BIOMASS_MULTIPLIER = 1500.0
 
 # Tier 1 filter thresholds (applied to raw, un-scaled values).
 LENGTH_FRAC = 0.9      # drop runs with fewer than 90% of the max snapshot count
-# Runs with any final param NaN/inf or on its clamp bound are dropped too
+# Runs with any final param NaN/inf or > 4 decades from the reference are dropped too
 # (rietkerk_model.degenerate_parameters).
 
 # Unit conversion for display and reporting: Rietkerk's physical units (m²/day
@@ -348,8 +348,8 @@ def _fmt_allmodels(value):
 
 
 def _cell_param(fp, name, degenerate):
-    """Format one parameter cell: a dash for a value on its clamp bound (failed
-    run), else the value in physical units."""
+    """Format one parameter cell: a dash for a degenerate value (> 4 decades from
+    the reference: failed run), else the value in physical units."""
     if name in degenerate:
         return r"\textemdash"
     return _fmt_allmodels(scale(name, fp.get(name, float("nan"))))

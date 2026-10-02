@@ -141,7 +141,7 @@ def calculate_parameter_agreement(results_dir: str, max_models: int = 10,
         if not all(param in final_snapshot for param in parameter_names):
             continue
         
-        # Check for invalid values (non-finite, or run onto a clamp bound)
+        # Check for invalid values (non-finite, or > 4 decades from the reference)
         if degenerate_parameters(final_snapshot, GROUND_TRUTH_PARAMS):
             continue
         
